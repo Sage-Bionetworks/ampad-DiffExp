@@ -1132,7 +1132,7 @@ FIT_OBJ = File('ROSMAP_Models.RData',
                parentId = CODE$properties$id)
 all.annotations@annotations@stringAnnotations$dataSubType = 'modelFits'
 all.annotations@annotations@stringAnnotations$fileFormat = 'RData'
-annotations(DEXP_OBJ) = all.annotations
+annotations(FIT_OBJ) = all.annotations
 FIT_OBJ = synStore(FIT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 synChangeEntityACL(FIT_OBJ@properties$id, new.racl)
 
