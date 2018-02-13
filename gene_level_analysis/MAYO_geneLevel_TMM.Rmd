@@ -1,5 +1,5 @@
 ---
-title: Covariate and differential expression analysis of MAYO reprocessed counts
+title: Covariate and differential expression analysis of MAYO reprocessed counts (with TMM normalisation)
 author: Thanneer Perumal
 editor_options:
   chunk_output_type: console
@@ -20,7 +20,6 @@ library(limma)
 library(edgeR)
 library(biomaRt)
 library(RColorBrewer)
-library(cqn)
 library(glmnet)
 
 library(synapseClient)
@@ -58,7 +57,7 @@ activityName = 'Differential Expression Analysis';
 activityDescription = 'Differential expression analysis of reprocessed RNASeq from MAYO samples';
 
 # Github link
-thisFileName <- 'MAYO_geneLevel.Rmd'
+thisFileName <- 'MAYO_geneLevel_TMM.Rmd'
 thisRepo <- getRepo(repository = "th1vairam/ampad-DiffExp", ref="branch", refName='geneLevelAnalysis')
 thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('gene_level_analysis/',thisFileName))
 ```
@@ -386,15 +385,11 @@ summary(factor(Ensemble2HGNC$gene_biotype)) %>%
 Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples
 
 ### Library Normalisation
-Library normalisation is performed using cqn (conditional quantile normalisation)
-```{r cqn}
-# Compute offset for gene length and gc content
-CQN.GENE_EXPRESSION = cqn(PROCESSED_COUNTS$filteredExprMatrix$counts, 
-                          x = GENE.GC[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'percentage_gc_content'],
-                          lengths = GENE.LEN[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'gene.length'],
-                          lengthMethod = "smooth", 
-                          verbose = FALSE)
-CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
+Library normalisation is performed using TMM
+```{r tmm}
+# Normalise using TMM
+TMM.GENE_EXPRESSION = calcNormFactors(PROCESSED_COUNTS$filteredExprMatrix, method = 'TMM')
+VOOM.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION)
 ```
 
 ### Outlier Analysis
@@ -405,7 +400,7 @@ indToRemove = c("11311_CER", "1923_CER", "1923_TCX", "11396_TCX", "11294_TCX", "
                 '1950_TCX', '1950_CER', '1925_TCX', '1957_CER')
 
 # Find principal components of expression to plot
-PC <- prcomp(CQN.GENE_EXPRESSION$E, scale.=T, center = T)
+PC <- prcomp(VOOM.GENE_EXPRESSION$E, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
@@ -425,7 +420,7 @@ p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
 
 # Plot abberent distribution of logcpm counts
-tmp1 = CQN.GENE_EXPRESSION$E %>%
+tmp1 = VOOM.GENE_EXPRESSION$E %>%
   rownameToFirstColumn('Gene.ID') %>%
   tidyr::gather(SampleID, logCPM, -Gene.ID) %>%
   left_join(COVARIATES %>%
@@ -441,7 +436,7 @@ p
 
 indToRetain = setdiff(colnames(PROCESSED_COUNTS$filteredExprMatrix$counts), indToRemove)
 PROCESSED_COUNTS$filteredExprMatrix$counts = PROCESSED_COUNTS$filteredExprMatrix$counts[,indToRetain]
-CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E[,indToRetain]
+VOOM.GENE_EXPRESSION$E = VOOM.GENE_EXPRESSION$E[,indToRetain]
 COVARIATES = COVARIATES[indToRetain,]
 
 tmp = COVARIATES %>%
@@ -460,7 +455,7 @@ Distribution of samples are: `r kable(tmp)`
 Assign NA values to genes that are above and below 3 std deviation of its distribution
 ```{r winsorise.data}
 # Set gene counts in specific samples that are deviating 3 sd from other samples to 3SD limit
-LOG.CPM = apply(CQN.GENE_EXPRESSION$E, 1, function(x){
+LOG.CPM = apply(VOOM.GENE_EXPRESSION$E, 1, function(x){
   mn = mean(x, na.rm = T)
   std.dev = sd(x, na.rm = T)
   
@@ -468,9 +463,9 @@ LOG.CPM = apply(CQN.GENE_EXPRESSION$E, 1, function(x){
   x[x > (mn+3*std.dev)] = NA
   return(x)
 }) %>% t
-CQN.GENE_EXPRESSION$E = LOG.CPM
-CQN.GENE_EXPRESSION$E.no.na = CQN.GENE_EXPRESSION$E
-CQN.GENE_EXPRESSION$E.no.na[is.na(CQN.GENE_EXPRESSION$E.no.na)] = 0
+VOOM.GENE_EXPRESSION$E = LOG.CPM
+VOOM.GENE_EXPRESSION$E.no.na = VOOM.GENE_EXPRESSION$E
+VOOM.GENE_EXPRESSION$E.no.na[is.na(VOOM.GENE_EXPRESSION$E.no.na)] = 0
 LIB.SIZE = colSums(PROCESSED_COUNTS$filteredExprMatrix$counts)
 NEW.COUNTS = (2^LOG.CPM) * t(replicate(dim(LOG.CPM)[1], LIB.SIZE))/1e6
 ```
@@ -479,7 +474,7 @@ NEW.COUNTS = (2^LOG.CPM) * t(replicate(dim(LOG.CPM)[1], LIB.SIZE))/1e6
 PCA based clustering of samples
 ```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis', cache=FALSE}
 # Find principal components of expression to plot
-PC <- prcomp(CQN.GENE_EXPRESSION$E.no.na, scale.=T, center = T)
+PC <- prcomp(VOOM.GENE_EXPRESSION$E.no.na, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
@@ -500,7 +495,7 @@ Tree based clustering of samples
 COVARIATES.tmp = (COVARIATES[,c(FactorCovariates), drop = F])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
-tree = hclust(as.dist(t(CQN.GENE_EXPRESSION$E.no.na)))
+tree = hclust(as.dist(t(VOOM.GENE_EXPRESSION$E.no.na)))
 cols = WGCNA::labels2colors(COVARIATES.tmp);
 
 WGCNA::plotDendroAndColors(tree, 
@@ -514,7 +509,7 @@ WGCNA::plotDendroAndColors(tree,
 ### Distribution of samples (log cpm)
 ```{r lcpm.dist, cache=FALSE, fig.height=10, fig.width=20}
 # Plot abberent distribution of logcpm counts
-tmp1 = CQN.GENE_EXPRESSION$E %>%
+tmp1 = VOOM.GENE_EXPRESSION$E.no.na %>%
   rownameToFirstColumn('Gene.ID') %>%
   tidyr::gather(SampleID, logCPM, -Gene.ID) %>%
   left_join(COVARIATES %>%
@@ -528,7 +523,7 @@ p
 
 Coexpression of genes 
 ```{r coexp1, cache=FALSE, fig.height=5, fig.width=5}
-cr = cor(t(CQN.GENE_EXPRESSION$E.no.na))
+cr = cor(t(VOOM.GENE_EXPRESSION$E.no.na))
 hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
 ```
 
@@ -536,7 +531,7 @@ hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation
 Correlation between pca of unadjusted mRNA expression and covariates are used to find significant covariates
 ```{r preadj.covariates, cache=TRUE}
 # Find correlation between PC's of gene expression with covariates
-preAdjustedSigCovars = runPCAandPlotCorrelations(CQN.GENE_EXPRESSION$E.no.na, 
+preAdjustedSigCovars = runPCAandPlotCorrelations(VOOM.GENE_EXPRESSION$E.no.na, 
                                                  COVARIATES,
                                                  'NULL design(voom-normalized)', 
                                                  isKeyPlot=TRUE, 
@@ -579,11 +574,12 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 20){
   
   # Estimate voom weights for dispersion control
   cnts = NEW.COUNTS; cnts[is.na(cnts)] = 0
+  TMM.GENE_EXPRESSION = calcNormFactors(cnts, method = 'TMM')
   VOOM.GENE_EXPRESSION = voom(cnts, design=DM1$design, 
-                              plot=F, na.rm = T)
+                              plot=F, na.rm = T,
+                              lib.size = LIB.SIZE * TMM.GENE_EXPRESSION)
   
   # Calculate correlation values of random effects
-  VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
   correlation = parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION,
                                              block = COVARIATES$Donor_ID,
                                              method = 'lmer')
@@ -594,18 +590,15 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 20){
     VOOM.GENE_EXPRESSION = voom(cnts, 
                                 design=DM1$design, plot=F, 
                                 block = COVARIATES$Donor_ID, 
-                                correlation = correlation$cor)
+                                correlation = correlation$cor,
+                                lib.size = LIB.SIZE * TMM.GENE_EXPRESSION)
     
     # Fit linear model using new weights and new design
-    VOOM.ADJUSTED.FIT = lmFit(CQN.GENE_EXPRESSION$E,
-                              design = DM1$design,
-                              weights = VOOM.GENE_EXPRESSION$weights,
-                              block = COVARIATES$Donor_ID, 
-                              correlation = correlation$cor)
+    VOOM.ADJUSTED.FIT = lmFit(VOOM.GENE_EXPRESSION)
     
     # Residuals after normalisation
     RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,
-                                                  CQN.GENE_EXPRESSION$E)
+                                                  VOOM.GENE_EXPRESSION$E)
   } else {
     notEstimable = c(notEstimable, postAdjustCovars[length(postAdjustCovars)])
     postAdjustCovars = postAdjustCovars[1:(length(postAdjustCovars)-1)]
@@ -696,26 +689,19 @@ Identified covariates are regressed out from the expression matrix for network a
 DESIGN.NET = getDesignMatrix(COVARIATES[, postAdjustCovars, drop = F], Intercept = F)
 DESIGN.NET = DESIGN.NET$design[,linColumnFinder(DESIGN.NET$design)$indepCols]
 
-# Estimate voom weights for dispersion control
-VOOM.NET.WEIGHTS = voom(cnts, design=DESIGN.NET, plot=F)
-
 # Re-estimate voom weights
 VOOM.NET.WEIGHTS = voom(cnts, 
                         design = DESIGN.NET, plot=F,
                         block = COVARIATES$Donor_ID, 
-                        correlation = correlation$cor)
+                        correlation = correlation$cor,
+                        lib.size = LIB.SIZE * TMM.GENE_EXPRESSION)
 
 # Fit linear model using new weights and new design
-VOOM.NET.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-VOOM.NET.FIT = lmFit(VOOM.NET.WEIGHTS$E,
-                     weights = VOOM.NET.WEIGHTS$weights,
-                     design = VOOM.NET.WEIGHTS$design,
-                     block = COVARIATES$Donor_ID, 
-                     correlation = correlation$cor)
+VOOM.NET.FIT = lmFit(VOOM.NET.WEIGHTS)
 
 # Residuals after normalisation
 RESIDUAL.NET.GENE_EXPRESSION = residuals.MArrayLM(VOOM.NET.FIT,
-                                                  CQN.GENE_EXPRESSION$E)
+                                                  VOOM.GENE_EXPRESSION$E)
 ```
 
 ### SVA Adjustments for eQTL analysis
@@ -725,22 +711,15 @@ Conditioned on primary variable (Tissue.Diagnosis) and identified covariates est
 DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable[2], postAdjustCovars), drop = F], Intercept = F)
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 
-# Estimate voom weights for dispersion control
-VOOM.WEIGHTS = voom(cnts, design=DESIGN$design, plot=F)
-
 # Re-estimate voom weights
 VOOM.WEIGHTS = voom(cnts,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$Donor_ID, 
-                    correlation = correlation$cor)
+                    correlation = correlation$cor,
+                    lib.size = LIB.SIZE * TMM.GENE_EXPRESSION)
 
 # Fit linear model using new weights and new design
-VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-FIT = lmFit(VOOM.WEIGHTS$E,
-            weights = VOOM.WEIGHTS$weights,
-            design = VOOM.WEIGHTS$design,
-            block = COVARIATES$Donor_ID, 
-            correlation = correlation$cor)
+FIT = lmFit(VOOM.WEIGHTS)
 
 # Get (null) design matrix
 MODEL0 = DESIGN$design[,-grep(primaryVariable[2],colnames(DESIGN$design))] # Get null model by removing variable of interest
@@ -749,7 +728,7 @@ MODEL1 = DESIGN$design
 MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
 
 # Get residuals from differential expression model
-RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(FIT, CQN.GENE_EXPRESSION$E)
+RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(FIT, VOOM.WEIGHTS$E)
 
 # Compute actual variance of all principal components
 expr = RESIDUAL.SVA.GENE_EXPRESSION
@@ -778,33 +757,26 @@ p = p + theme(legend.position = c(0.8, 0.8), legend.title = element_blank())
 p
 
 # Estimate surrogate variables
-SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$E.no.na,
+SURR.VAR = irwsva.build(VOOM.WEIGHTS$E,
                         MODEL1, MODEL0, n.sv = NUM.SV, 
                         B = 30, tol = 1e-20)$sv
 
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 rownames(SURR.VAR) = rownames(MODEL1)
 
-# Estimate voom weights for dispersion control
-VOOM.SVA.WEIGHTS = voom(cnts, design=cbind(MODEL1, SURR.VAR), plot=F)
-
 # Re-estimate voom weights
 VOOM.SVA.WEIGHTS = voom(cnts, 
                         design = cbind(MODEL1, SURR.VAR), plot=F,
                         block = COVARIATES$Donor_ID, 
-                        correlation = correlation$cor)
+                        correlation = correlation$cor,
+                        lib.size = LIB.SIZE * TMM.GENE_EXPRESSION)
 
 # Fit linear model using new weights and new design
-VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-VOOM.SVA.FIT = lmFit(VOOM.SVA.WEIGHTS$E,
-                     weights = VOOM.SVA.WEIGHTS$weights,
-                     design = VOOM.SVA.WEIGHTS$design,
-                     block = COVARIATES$Donor_ID, 
-                     correlation = correlation$cor)
+VOOM.SVA.FIT = lmFit(VOOM.SVA.WEIGHTS)
 
 # Residuals after normalisation
 RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(VOOM.SVA.FIT,
-                                                  CQN.GENE_EXPRESSION$E)
+                                                  VOOM.SVA.WEIGHTS$E)
 
 # Add variable of interest back to the residuals
 varsToAddIn = grep("Tissue.Diagnosis", colnames(MODEL1), value = T)
@@ -835,14 +807,11 @@ DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 VOOM.WEIGHTS = voom(cnts,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$Donor_ID, 
-                    correlation = correlation$cor)
+                    correlation = correlation$cor,
+                    lib.size = LIB.SIZE * TMM.GENE_EXPRESSION)
 
 # Fit linear model using new weights and new design
-FIT = lmFit(CQN.GENE_EXPRESSION$E,
-            weights = VOOM.WEIGHTS$weights,
-            design = VOOM.WEIGHTS$design,
-            block = COVARIATES$Donor_ID, 
-            correlation = correlation$cor)
+FIT = lmFit(VOOM.WEIGHTS)
 
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
@@ -918,14 +887,11 @@ DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 VOOM.WEIGHTS = voom(cnts,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$Donor_ID, 
-                    correlation = correlation$cor)
+                    correlation = correlation$cor,
+                    lib.size = LIB.SIZE * TMM.GENE_EXPRESSION)
 
 # Fit linear model using new weights and new design
-FIT = lmFit(CQN.GENE_EXPRESSION$E,
-            weights = VOOM.WEIGHTS$weights,
-            design = VOOM.WEIGHTS$design,
-            block = COVARIATES$Donor_ID, 
-            correlation = correlation$cor)
+FIT = lmFit(VOOM.WEIGHTS)
 
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
@@ -1026,14 +992,11 @@ DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 VOOM.WEIGHTS = voom(cnts,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$Donor_ID, 
-                    correlation = correlation$cor)
+                    correlation = correlation$cor,
+                    lib.size = LIB.SIZE * TMM.GENE_EXPRESSION)
 
 # Fit linear model using new weights and new design
-FIT = lmFit(CQN.GENE_EXPRESSION$E,
-            weights = VOOM.WEIGHTS$weights,
-            design = VOOM.WEIGHTS$design,
-            block = COVARIATES$Donor_ID, 
-            correlation = correlation$cor)
+FIT = lmFit(VOOM.WEIGHTS)
 
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
@@ -1104,14 +1067,11 @@ DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 VOOM.WEIGHTS = voom(cnts,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$Donor_ID, 
-                    correlation = correlation$cor)
+                    correlation = correlation$cor,
+                    lib.size = LIB.SIZE * TMM.GENE_EXPRESSION)
 
 # Fit linear model using new weights and new design
-FIT = lmFit(CQN.GENE_EXPRESSION$E,
-            weights = VOOM.WEIGHTS$weights,
-            design = VOOM.WEIGHTS$design,
-            block = COVARIATES$Donor_ID, 
-            correlation = correlation$cor)
+FIT = lmFit(VOOM.WEIGHTS)
 
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
@@ -1180,14 +1140,11 @@ DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 VOOM.WEIGHTS = voom(cnts,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$Donor_ID, 
-                    correlation = correlation$cor)
+                    correlation = correlation$cor,
+                    lib.size = LIB.SIZE * TMM.GENE_EXPRESSION)
 
 # Fit linear model using new weights and new design
-FIT = lmFit(CQN.GENE_EXPRESSION$E,
-            weights = VOOM.WEIGHTS$weights,
-            design = VOOM.WEIGHTS$design,
-            block = COVARIATES$Donor_ID, 
-            correlation = correlation$cor)
+FIT = lmFit( VOOM.WEIGHTS)
 
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
@@ -1243,7 +1200,7 @@ all.annotations = annotations(synGet(COUNT_CE_ID))
 all.annotations$tissue = c("cerebellum, temporal cortex")
 
 # Code
-CODE <- Folder(name = "MAYO Reprocessed RNASeq (Normalised)", parentId = parentId)
+CODE <- Folder(name = "MAYO Reprocessed RNASeq (TMM Normalised without adjusting for GC and gene length)", parentId = parentId)
 CODE <- synStore(CODE)
 
 # Store covariates
@@ -1253,7 +1210,7 @@ COV_OBJ = File('MAYO_CBE_TCX_Covariates.tsv', name = 'Covariates', parentId = CO
 all.annotations$fileFormat = "tsv"
 all.annotations$dataSubType = 'covariates'
 all.annotations$normalizationStatus	= TRUE
-all.annotations$normalizationType	= 'CQN'
+all.annotations$normalizationType	= 'TMM'
 annotations(COV_OBJ) = all.annotations
 COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                    executed = thisFile, activityDescription = activityDescription)
@@ -1277,22 +1234,13 @@ annotations(ECOUNT_OBJ) = all.annotations
 ECOUNT_OBJ = synStore(ECOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store logCPM
-CQN.GENE_EXPRESSION$y %>%
+VOOM.GENE_EXPRESSION$E %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'MAYO_CBE_TCX_logCPM.tsv', sep = '\t', row.names=F, quote=F)
 LCOUNT_OBJ = File('MAYO_CBE_TCX_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
 all.annotations@annotations@stringAnnotations$dataSubType = 'filteredLCPM'
 annotations(LCOUNT_OBJ) = all.annotations
 LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
-
-# Store cqn offsets
-CQN.GENE_EXPRESSION$offset %>%
-  rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'MAYO_CBE_TCX_offset.tsv', sep = '\t', row.names=F, quote=F)
-OFFSET_OBJ = File('MAYO_CBE_TCX_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
-all.annotations@annotations@stringAnnotations$dataSubType = 'offset'
-annotations(OFFSET_OBJ) = all.annotations
-OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store design matrix
 MODEL1 %>%
@@ -1361,7 +1309,6 @@ AFIT_OBJ = synStore(AFIT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 |  Counts (raw)                               |  `r COUNT_OBJ$properties$id`     |
 |  Counts (estimated)                         |  `r ECOUNT_OBJ$properties$id`    |
 |  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
-|  Offset (for gene length and gc content)    |  `r OFFSET_OBJ$properties$id`    |
 |  Design Matrix                              |  `r DM_OBJ$properties$id`        |
 |  Surrogate Variables                        |  `r SURR_OBJ$properties$id`      |
 |  Residual Expression (for eQTL)             |  `r eEXP_OBJ$properties$id`      |
@@ -1377,7 +1324,7 @@ library(knit2synapse) # get the package from devtools::install_github('Sage-Bion
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./MAYO_geneLevel.Rmd",
+knit2synapse::knitToFolderEntity(file = "./MAYO_geneLevel_TMM.Rmd",
                                  parentId = "syn8672415",
-                                 entityName = 'MAYO Reprocessed RNASeq (Normalised)')
+                                 entityName = 'MAYO Reprocessed RNASeq (TMM Normalised without adjusting for GC and gene length)')
 ```
