@@ -433,8 +433,9 @@ tmp1 = CQN.GENE_EXPRESSION$E %>%
   tidyr::separate(Tissue.Diagnosis, c('Tissue', 'Diagnosis'), sep = '\\.')
 
 p = ggplot(tmp1 %>%
-             dplyr::filter(SampleID %in% indToRemove),
-           aes(x = logCPM, color = SampleID)) + geom_density() 
+             dplyr::filter(SampleID %in% indToRemove) %>%
+             droplevels(),
+           aes(x = logCPM)) + geom_density() 
 p = p + theme(legend.position = 'top') + facet_grid(Tissue~.+Diagnosis)
 p
 
@@ -444,8 +445,9 @@ CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E[,indToRetain]
 COVARIATES = COVARIATES[indToRetain,]
 
 tmp = COVARIATES %>%
-  dplyr::group_by(Diagnosis, cogdx) %>%
+  dplyr::group_by(Tissue.Diagnosis) %>%
   dplyr::summarise(count = n()) %>%
+  tidyr::separate(Tissue.Diagnosis, c('Tissue', 'Diagnosis'), sep = '\\.') %>%
   tidyr::spread(Diagnosis, count)
 ```
 Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples
@@ -1363,13 +1365,17 @@ AFIT_OBJ = synStore(AFIT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 |  Residual Expression (for eQTL)             |  `r eEXP_OBJ$properties$id`      |
 |  Residual Expression (for network analysis) |  `r nEXP_OBJ$properties$id`      |
 |  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
+
+### R Source Code
+[Github](`r thisFile`)
+
 ```{r knit2synapse, eval=FALSE}
 library(synapseClient)
 library(knit2synapse) # get the package from devtools::install_github('Sage-Bionetworks/knit2synapse')
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./MAYO_REPROCESSED.Rmd",
+knit2synapse::knitToFolderEntity(file = "./MAYO_geneLevel.Rmd",
                                  parentId = "syn8672415",
                                  entityName = 'MAYO Reprocessed RNASeq (Normalised)')
 ```
