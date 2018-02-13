@@ -1139,7 +1139,7 @@ synChangeEntityACL(FIT_OBJ@properties$id, new.racl)
 # Delete folder acl
 synChangeEntityACL(CODE@properties$id, old.acl@resourceAccess)
 
-stopCluster(cl)
+# stopCluster(cl)
 ```
 |  *Results*                                  |  *SynapseID*                     |
 |  -----------------------------------------  |   -----------------------------  |
@@ -1147,7 +1147,6 @@ stopCluster(cl)
 |  Counts (raw)                               |  `r COUNT_OBJ$properties$id`     |
 |  Counts (estimated)                         |  `r ECOUNT_OBJ$properties$id`    |
 |  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
-|  Offset (for gene length and gc content)    |  `r OFFSET_OBJ$properties$id`    |
 |  Design Matrix                              |  `r DM_OBJ$properties$id`        |
 |  Surrogate Variables                        |  `r SURR_OBJ$properties$id`      |
 |  Residual Expression (for eQTL)             |  `r eEXP_OBJ$properties$id`      |
