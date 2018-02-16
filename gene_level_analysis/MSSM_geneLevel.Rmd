@@ -150,8 +150,9 @@ METADATA = METADATA %>%
                 !is.na(RIN),
                 !is.na(bbscore),
                 !is.na(NP.1),
+                !is.na(sampleIdentifier),
                 RIN >= 5,
-                BroadmannArea %in% c('BM10', 'BM22', 'BM36', 'BM44'))
+                BrodmannArea %in% c('BM10', 'BM22', 'BM36', 'BM44'))
 
 # Fix metadata
 METADATA = METADATA %>%
@@ -162,8 +163,7 @@ METADATA = METADATA %>%
                                                 'BM36' = 'PHG', 'BM44' = 'IFG')), 
                 RIN2 = RIN^2, 
                 SEX = factor(SEX, levels = c('M','F'), labels = c('MALE', 'FEMALE')),
-                Tissue1 = Tissue) %>%
-  dplyr::filter()
+                Tissue1 = Tissue)
 rownames(METADATA) = METADATA$sampleIdentifier
 
 # Get harmonised case control definition
@@ -174,18 +174,6 @@ METADATA$Tissue.Diagnosis = paste(METADATA$Tissue, METADATA$Diagnosis, sep = '.'
 
 # Fix missing batch
 levels(METADATA$batch)[levels(METADATA$batch) == ''] = 'NoBatch'
-
-# Fix RIN values for some samples (Based on email conversation with Minghui May 22 2017)
-FIX.RIN = c(hB_RNA_12312_resequenced = 3.9,
-            hB_RNA_12342 = 3.9,
-            hB_RNA_12352 = 4.2,
-            hB_RNA_9191 = 5,
-            hB_RNA_12262_resequenced = 5.2,
-            hB_RNA_9216 = 5.7,
-            hB_RNA_12272_resequenced = 5.8,
-            hB_RNA_12382 = 5.8, 
-            hB_RNA_13359 = 6.4)
-METADATA[names(FIX.RIN),'RIN'] = FIX.RIN
 
 # Introduce ApoE4
 METADATA$APOE4 = 0
@@ -513,7 +501,7 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 20){
                          c(postAdjustCovars, primaryVariable, 'individualIdentifier'))
   
   # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
-  expr = RESIDUAL.GENE_EXPRESSION; expr[is.na(expr)] = 0
+  expr = RESIDUAL.GENE_EXPRESSION; expr[is.na(expr)] = 0; expr = expr[rowSums(expr)!=0,]
   residualSigCovars = runPCAandPlotCorrelations(expr, 
                                                 COVARIATES[, residCovars, drop=F], 
                                                 'adjusted design(voom-normalized)',
@@ -584,6 +572,28 @@ WGCNA::plotDendroAndColors(tree,
                            groupLabels = colnames(COVARIATES.tmp))
 ```
 
+### Adjust data with covariates for Network Analysis
+Identified covariates are regressed out from the expression matrix for network analysis
+```{r network.adjust}
+# Get design matrix
+DESIGN.NET = getDesignMatrix(COVARIATES[, postAdjustCovars, drop = F], Intercept = F)
+DESIGN.NET = DESIGN.NET$design[,linColumnFinder(DESIGN.NET$design)$indepCols]
+
+# Re-estimate voom weights
+VOOM.NET.WEIGHTS = voom(cnts, 
+                        design = DESIGN.NET, plot=F,
+                        block = COVARIATES$individualIdentifier, 
+                        correlation = correlation$cor)
+
+# Fit linear model using new weights and new design
+VOOM.NET.WEIGHTS$E = CQN.GENE_EXPRESSION$E
+VOOM.NET.FIT = lmFit(VOOM.NET.WEIGHTS)
+
+# Residuals after normalisation
+RESIDUAL.NET.GENE_EXPRESSION = residuals.MArrayLM(VOOM.NET.FIT,
+                                                  CQN.GENE_EXPRESSION$E)
+```
+
 ### SVA Adjustments for eQTL analysis
 Conditioned on primary variable (Tissue.Diagnosis) and identified covariates estimate surrogate variables using SVA package
 ```{r sva.adjust}
@@ -596,6 +606,16 @@ MODEL0 = DESIGN$design[,-grep(primaryVariable[2],colnames(DESIGN$design))] # Get
 MODEL0 = MODEL0[,linColumnFinder(MODEL0)$indepCols]
 MODEL1 = DESIGN$design
 MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
+
+# Re-estimate voom weights
+VOOM.WEIGHTS = voom(cnts, 
+                    design = MODEL1, plot=F,
+                    block = COVARIATES$individualIdentifier, 
+                    correlation = correlation$cor)
+
+# Fit linear model using new weights and new design
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
+FIT = lmFit(VOOM.WEIGHTS)
 
 # Get residuals from differential expression model
 RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(FIT, CQN.GENE_EXPRESSION$E)
@@ -641,116 +661,6 @@ VOOM.SVA.WEIGHTS = voom(cnts,
 # Fit linear model using new weights and new design
 VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 VOOM.SVA.FIT = lmFit(VOOM.SVA.WEIGHTS)
-
-# Residuals after normalisation
-RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(VOOM.SVA.FIT,
-                                                  CQN.GENE_EXPRESSION$E)
-
-# Add variable of interest back to the residuals
-varsToAddIn = grep("Tissue.Diagnosis", colnames(MODEL1), value = T)
-RESIDUAL.SVA.GENE_EXPRESSION = RESIDUAL.SVA.GENE_EXPRESSION + 
-  VOOM.SVA.FIT$coefficients[,varsToAddIn] %*% t(VOOM.SVA.FIT$design[,varsToAddIn])
-```
-
-### Adjust data with covariates for Network Analysis
-Identified covariates are regressed out from the expression matrix for network analysis
-```{r network.adjust}
-# Get design matrix
-DESIGN.NET = getDesignMatrix(COVARIATES[, postAdjustCovars, drop = F], Intercept = F)
-DESIGN.NET = DESIGN.NET$design[,linColumnFinder(DESIGN.NET$design)$indepCols]
-
-# Re-estimate voom weights
-VOOM.NET.WEIGHTS = voom(cnts, 
-                        design = DESIGN.NET, plot=F,
-                        block = COVARIATES$individualIdentifier, 
-                        correlation = correlation$cor)
-
-# Fit linear model using new weights and new design
-VOOM.NET.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-VOOM.NET.FIT = lmFit(VOOM.NET.WEIGHTS)
-
-# Residuals after normalisation
-RESIDUAL.NET.GENE_EXPRESSION = residuals.MArrayLM(VOOM.NET.FIT,
-                                                  CQN.GENE_EXPRESSION$E)
-```
-
-### SVA Adjustments for eQTL analysis
-Conditioned on primary variable (Tissue.Diagnosis) and identified covariates estimate surrogate variables using SVA package
-```{r sva.adjust}
-# Get design matrix
-DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable[2], postAdjustCovars), drop = F], Intercept = F)
-DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
-
-# Re-estimate voom weights
-VOOM.WEIGHTS = voom(cnts,
-                    design=DESIGN$design, plot=F,
-                    block = COVARIATES$individualIdentifier, 
-                    correlation = correlation$cor)
-
-# Fit linear model using new weights and new design
-VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-FIT = lmFit(VOOM.WEIGHTS$E,
-            weights = VOOM.WEIGHTS$weights,
-            design = VOOM.WEIGHTS$design,
-            block = COVARIATES$individualIdentifier, 
-            correlation = correlation$cor)
-
-# Get (null) design matrix
-MODEL0 = DESIGN$design[,-grep(primaryVariable[2],colnames(DESIGN$design))] # Get null model by removing variable of interest
-MODEL0 = MODEL0[,linColumnFinder(MODEL0)$indepCols]
-MODEL1 = DESIGN$design
-MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
-
-# Get residuals from differential expression model
-RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(FIT, CQN.GENE_EXPRESSION$E)
-
-# Compute actual variance of all principal components
-expr = RESIDUAL.SVA.GENE_EXPRESSION
-expr[is.na(expr)] = 0
-tmp = svd(expr)
-actual.var = tmp$d^2/sum(tmp$d^2)
-
-# Compute permuted variance of all principal components
-permuted.var = foreach(i = 1:20, .combine = rbind) %dopar% {
-  tmp.residual = t(apply(expr, 1, sample, replace = FALSE))
-  tmp = svd(tmp.residual)
-  permuted.var = tmp$d^2/sum(tmp$d^2)
-}
-permuted.var = apply(permuted.var, 2, mean)
-NUM.SV = sum(actual.var >= permuted.var[1])
-
-# Plot variance components
-var.comp = data.frame(component = 1:length(actual.var), 
-                      residual = actual.var, 
-                      permuted.residual = permuted.var) %>%
-  tidyr::gather(data, value, -component)
-p = ggplot(var.comp %>% filter(component <= round(NUM.SV*1.2)), aes(x = component, y = value, color = data)) + geom_point()
-p = p + geom_hline(yintercept=permuted.var[1], linetype = 'dashed') + xlab('Singular Dimension Index')
-p = p + geom_vline(xintercept=NUM.SV, linetype = 'dashed') + ylab('Fraction of Variance Explained')
-p = p + theme(legend.position = c(0.8, 0.8), legend.title = element_blank())
-p
-
-# Estimate surrogate variables
-SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$E.no.na,
-                        MODEL1, MODEL0, n.sv = NUM.SV, 
-                        B = 30, tol = 1e-20)$sv
-
-colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
-rownames(SURR.VAR) = rownames(MODEL1)
-
-# Re-estimate voom weights
-VOOM.SVA.WEIGHTS = voom(cnts, 
-                        design = cbind(MODEL1, SURR.VAR), plot=F,
-                        block = COVARIATES$individualIdentifier, 
-                        correlation = correlation$cor)
-
-# Fit linear model using new weights and new design
-VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-VOOM.SVA.FIT = lmFit(VOOM.SVA.WEIGHTS$E,
-                     weights = VOOM.SVA.WEIGHTS$weights,
-                     design = VOOM.SVA.WEIGHTS$design,
-                     block = COVARIATES$individualIdentifier, 
-                     correlation = correlation$cor)
 
 # Residuals after normalisation
 RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(VOOM.SVA.FIT,
