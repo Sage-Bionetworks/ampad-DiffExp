@@ -1142,7 +1142,7 @@ new.racl = ResourceAccess(principalId = '3319864',
 all.annotations = annotations(synGet(COUNT_ID))
 
 # Code
-CODE <- Folder(name = "MSSM Reprocessed RNASeq (Normalised)", parentId = parentId)
+CODE <- Folder(name = "MSSM Reprocessed RNASeq (TMM Normalised without adjusting for GC and gene length)", parentId = parentId)
 CODE <- synStore(CODE)
 synChangeEntityACL(CODE@properties$id, new.racl)
 
