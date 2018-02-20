@@ -104,7 +104,7 @@ amp.ad.de.geneSets = diff.exp %>%
 # Get github commit
 thisFileName <- 'collateDiffExp.R'
 thisRepo <- getRepo(repository = "th1vairam/ampad-DiffExp", ref="branch", refName='geneLevelAnalysis')
-thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('gene_level_analysis/',thisFileName))
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('utilityFunctions/',thisFileName))
 
 # Store results in synapse
 save(list='amp.ad.de.geneSets', file = 'all.diff.exp.gs.RData')
