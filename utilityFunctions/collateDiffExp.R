@@ -7,17 +7,17 @@ library(githubr)
 
 library(CovariateAnalysis)
 library(data.table)
-library(tidyr)
 library(plyr)
-library(dplyr)
-library(stringr)
+library(tidyverse)
 
 synapseLogin()
 
 diff.exp = lapply(c(MAYO = 'syn8468023',
                     MSSM = 'syn10526259',
                     ROSMAP = 'syn8456721'),
-                  downloadFile)
+                  function(id){
+                    fread(synGet(id)@filePath, data.table = FALSE, header = T)
+                  })
 
 ############################################
 ## Combine all differential expression results
@@ -26,6 +26,7 @@ diff.exp$MSSM = diff.exp$MSSM %>%
   plyr::ddply(.(Model), .fun = function(x){
     if (any(x$Model %in% c('Diagnosis.SEX', 'Diagnosis.AOD'))){
       x %>%
+        dplyr::select(-Tissue) %>%
         tidyr::separate(Comparison, c('c1','c2'), sep = '\\-') %>%
         tidyr::separate(c1, c('Tissue', 'c11','SEX'), sep = '\\.') %>%
         tidyr::separate(c2, c('Tissue1', 'c21','SEX1'), sep = '\\.') %>%
@@ -77,9 +78,8 @@ setnames(diff.exp$MAYO, 'Sex.ag', 'Sex')
 diff.exp$MAYO$Sex[is.na(diff.exp$MAYO$Sex)] = 'ALL'
 
 diff.exp$MAYO$Comparison = factor(diff.exp$MAYO$Comparison)
-levels(diff.exp$MAYO$Comparison) = c("AD-CONTROL", "PATH_AGE-CONTROL", "PSP-CONTROL", 
-                                     "AD-PATH_AGE", "AD-OTHER",
-                                     "OTHER-CONTROL", "2-0", "2-1", "1-0")
+levels(diff.exp$MAYO$Comparison) = c("AD-CONTROL", "AD-OTHER", "AD-PATH_AGE", "1-0",  
+                                     "2-0", "2-1", "OTHER-CONTROL", "PATH_AGE-CONTROL", "PSP-CONTROL")   
 
 # Fix study name
 diff.exp$ROSMAP$Study = NULL
