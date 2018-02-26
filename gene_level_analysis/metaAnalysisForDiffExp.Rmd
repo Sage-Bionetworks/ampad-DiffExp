@@ -6,6 +6,7 @@ output: html_document
 editor_options: 
   chunk_output_type: console
 ---
+
 ```{r knit2synapse, eval=FALSE}
 library(synapser)
 library(knit2synapse) # get the package from devtools::install_github('Sage-Bionetworks/knit2synapse')
@@ -24,7 +25,7 @@ knit2synapse::knitToFolderEntity(file = "metaAnalysisForDiffExp.Rmd",
 library(CovariateAnalysis)
 library(data.table)
 library(plyr)
-library(tidyr)
+library(tidyverse)
 
 library(synapser)
 library(knitr)
@@ -63,6 +64,7 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('gene_level
 
 ## Data download
 ### Get study specific covariates and adjusted expression from synapse
+
 ```{r get.exp}
 # Function to read tsv/csv files from synapse
 downloadFile <- function(id){ 
@@ -103,6 +105,7 @@ covar = covar %>%
   data.table::rbindlist(use.names = T, fill = T, idcol = 'Study') %>%
   dplyr::select(-Tissue1)
 ```
+
 ## Perform fixed and random effect meta-analysis for each gene across 7 different brain regions
 #### Meta-analysis of AD-CONTROL
 ```{r ad.cntrl}
@@ -216,6 +219,7 @@ gs = tmp %>%
 names(gs) = paste0('ad.control.', names(gs))
 all.gs = c(all.gs, gs)
 ```
+
 #### Meta-analysis of APOE42-APOE40
 ```{r apoe2.0}
 # Mean and sd of gene expression in each Tissue x APOE4 category
@@ -273,6 +277,7 @@ gs = tmp %>%
 names(gs) = paste0('apoe4.2.0.', names(gs))
 all.gs = c(all.gs, gs)
 ```
+
 ## Store results in synapse
 ```{r syn.store, cache = FALSE, include=FALSE}
 # Create folder to store results in synapse
@@ -311,5 +316,6 @@ obj = File('all.gensets.RData',
 obj = synStore(obj, activityName = activityName, activityDescription = activityDescription,
                used = all.used.ids, executed = thisFile)
 ```
+
 ## Source code
 [Source code in github](`r thisFile`)
