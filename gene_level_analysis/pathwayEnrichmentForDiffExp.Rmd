@@ -72,23 +72,20 @@ bck.genes = unique(dexp$hgnc_symbol)
 ```
 
 ### Get all gene sets
-```{r get.gs}
+```{r get.gs, cache = FALSE}
 # Get enrichr gene sets from synapse
 load(synGet('syn4867851')@filePath)
 all.used.ids = c('syn4867851', all.used.ids)
-GeneSets = GeneSets[c('BioCarta', 'Chromosome_Location', 'Cross_Species_Phenotype', 
-                      'Disease_Signatures_from_GEO_down', 'Disease_Signatures_from_GEO_up',
-                      'ENCODE_TF_ChIP-seq', 'GO_Biological_Process', 
-                      'KEGG_2015', 'Mouse_Gene_Atlas', 'OMIM_Disease', 'OMIM_Expanded', 'Panther', 
-                      'Reactome', 'TargetScan_microRNA', 'TF-LOF_Expression_from_GEO', 'TRANSFAC_and_JASPAR_PWMs',
-                      'WikiPathways', 'Single_Gene_Perturbations_from_GEO_up',
-                      'Single_Gene_Perturbations_from_GEO_down', 'Aging_Perturbations_from_GEO_down',
-                      'Aging_Perturbations_from_GEO_up', 'dbGaP', 'Disease_Perturbations_from_GEO_down',
-                      'Disease_Perturbations_from_GEO_up', 'DrugMatrix', 
-                      'Drug_Perturbations_from_GEO_down', 'Drug_Perturbations_from_GEO_up', 
-                      'GTEx_Tissue_Sample_Gene_Expression_Profiles_down',
-                      'GTEx_Tissue_Sample_Gene_Expression_Profiles_up', 'Jensen_DISEASES', 
-                      'RNA-Seq_Disease_Gene_and_Drug_Signatures_from_GEO')]
+# 'Chromosome_Location', 'Cross_Species_Phenotype', 'Disease_Signatures_from_GEO_down', 'Disease_Signatures_from_GEO_up',
+# 'ENCODE_TF_ChIP-seq','Mouse_Gene_Atlas', 'OMIM_Disease', 'OMIM_Expanded', 'TargetScan_microRNA',
+# 'TF-LOF_Expression_from_GEO', 'TRANSFAC_and_JASPAR_PWMs', 'Single_Gene_Perturbations_from_GEO_up',
+# 'Single_Gene_Perturbations_from_GEO_down', 'Aging_Perturbations_from_GEO_down', 'Aging_Perturbations_from_GEO_up', 
+# 'Disease_Perturbations_from_GEO_down', 'Disease_Perturbations_from_GEO_up', 'DrugMatrix', 'Drug_Perturbations_from_GEO_down',
+# 'Drug_Perturbations_from_GEO_up', 'GTEx_Tissue_Sample_Gene_Expression_Profiles_down',
+# 'GTEx_Tissue_Sample_Gene_Expression_Profiles_up', 'Jensen_DISEASES', 'RNA-Seq_Disease_Gene_and_Drug_Signatures_from_GEO'
+
+GeneSets = GeneSets[c('BioCarta', 'GO_Biological_Process', 'KEGG_2015', 'Reactome', 
+                      'Panther', 'dbGaP', 'WikiPathways')]
 gs = list()
 gs$HypothesisFree = do.call(c, GeneSets) %>%
   lapply(function(y){
@@ -125,14 +122,23 @@ gs = purrr::map(gs, function(geneSet, bckGenes){
 ```{r enrich.de}
 enrich.results = dexp %>%
   dplyr::filter(Direction != 'NONE') %>%
-  plyr::ddply(.(Model, Tissue, Comparison, Gender, Direction), .fun = function(x, gs, bckGenes){
+  plyr::ddply(.(Model, Tissue, Comparison, Sex, Direction), .fun = function(x, gs, bckGenes){
     gsToTest = setdiff(unique(x$hgnc_symbol),'')
-    enrich = plyr::ldply(gs, .fun = function(y, gsToTest, bckGenes){
-      plyr::ldply(y, .fun = function(gsToTest1, gsToTest, bckGenes){
-        CovariateAnalysis::fisherEnrichment(gsToTest1, gsToTest, bckGenes)
-      }, gsToTest, bckGenes, .id = 'SetName', .parallel = T, .paropts = list(.packages = c('CovariateAnalysis')))
-    }, gsToTest, bckGenes, .id = 'Category')
-  }, gs, bck.genes)
+    if (length(gsToTest) >= 10){
+      enrich = plyr::ldply(gs, .fun = function(y, gsToTest, bckGenes){
+        plyr::ldply(y, .fun = function(gsToTest1, gsToTest, bckGenes){
+          CovariateAnalysis::fisherEnrichment(gsToTest1, gsToTest, bckGenes)
+        }, gsToTest, bckGenes, .id = 'SetName')
+      }, gsToTest, bckGenes, .id = 'Category')
+      fwrite(enrich, 
+             paste(unique(c(x$Model, x$Tissue, x$Comparison, x$Sex, x$Direction)), collapse = '.') %>%
+               paste0('.tsv'))
+    } else {
+      enrich = data.frame()
+    }
+    return(enrich)
+  }, 
+  gs, bck.genes, .parallel = T, .paropts = list(.packages = c('CovariateAnalysis', 'plyr', 'dplyr','data.table')))
 
 fwrite(enrich.results, file = 'enrichmentResults.tsv', sep = '\t')
 obj = File('enrichmentResults.tsv', name = 'Enrichment Results (for all differential expression)', parentId = parentId)
