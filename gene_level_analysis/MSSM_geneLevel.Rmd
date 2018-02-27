@@ -1071,7 +1071,7 @@ all.fit = c(all.fit, list(Diagnosis.AOD = FIT))
 ```
 
 ### Store files in synapse
-```{r synapse.store, include=FALSE, eval=FALSE, cache=FALSE}
+```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Function to change entity ACL (also creates new acls if it doesn't exist)
 synChangeEntityACL <- function(id, new.racl){
   tryCatch({ 
@@ -1233,8 +1233,7 @@ synDeleteEntityACL(CODE@properties$id)
 |  Residual Expression (for eQTL)             |  `r eEXP_OBJ$properties$id`      |
 |  Residual Expression (for network analysis) |  `r nEXP_OBJ$properties$id`      |
 |  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
-
-```{r knit2synapse, eval=FALSE}
+```{r knit2syn, eval=FALSE}
 library(synapseClient)
 library(knit2synapse) # get the package from devtools::install_github('Sage-Bionetworks/knit2synapse')
 
@@ -1243,4 +1242,6 @@ synapseClient::synapseLogin()
 knit2synapse::knitToFolderEntity(file = "./MSSM_geneLevel.Rmd",
                                  parentId = "syn8672415",
                                  entityName = 'MSSM Reprocessed RNASeq (Normalised)')
+
 ```
+
