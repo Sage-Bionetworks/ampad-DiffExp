@@ -69,7 +69,7 @@ Obtain count matrix and metadata from synapse
 # Get reprocessed sample counts for temporal cortex
 COUNT_ID <- 'syn8691099';
 ALL_USED_IDs <- COUNT_ID
-COUNT <- synGet(COUNT_ID)@filePath %>%
+COUNT <- synapseClient::synGet(COUNT_ID)@filePath %>%
   read.table(header=T, sep='\t', check.names = F, row.names = 1)
 
 # Convert rownames of counts from tracking id to ensemble gene id
@@ -89,7 +89,7 @@ SampleID = data.frame(SampleID = colnames(COUNT),
 # Get technical metadata
 METADATA_TECH_ID <- 'syn6100548'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_TECH_ID
-METADATA_TECH <- synGet(METADATA_TECH_ID)@filePath %>%
+METADATA_TECH <- synapseClient::synGet(METADATA_TECH_ID)@filePath %>%
   read.table(sep=',',header=T, row.names=1) %>%
   group_by(sampleIdentifier) %>%
   top_n(1, -rRNA.rate) %>%
@@ -102,13 +102,13 @@ METADATA_TECH <- synGet(METADATA_TECH_ID)@filePath %>%
 # Get 90+ age
 METADATA_AGE_ID = 'syn10156693'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_AGE_ID
-METADATA_AGE <- synGet(METADATA_AGE_ID)@filePath %>%
+METADATA_AGE <- synapseClient::synGet(METADATA_AGE_ID)@filePath %>%
   read.table(sep='\t', header=T)
 
 # Get clinical metadata
 METADATA_CLINICAL_ID <- 'syn6101474'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_CLINICAL_ID
-METADATA_CLINICAL <- synGet(METADATA_CLINICAL_ID)@filePath %>%
+METADATA_CLINICAL <- synapseClient::synGet(METADATA_CLINICAL_ID)@filePath %>%
   read.csv(header = T)
 
 # Get picard metrics from synapse
@@ -156,13 +156,14 @@ METADATA = METADATA %>%
 
 # Fix metadata
 METADATA = METADATA %>%
+  dplyr::rename(Sex = SEX) %>%
   dplyr::mutate(AOD = gsub('\\+','',AOD),
                 Tissue = factor(BrodmannArea,
                                      levels = c('BM10', 'BM22', 'BM36', 'BM44'),
                                      labels = c('BM10' = 'FP', 'BM22' = 'STG', 
                                                 'BM36' = 'PHG', 'BM44' = 'IFG')), 
                 RIN2 = RIN^2, 
-                SEX = factor(SEX, levels = c('M','F'), labels = c('MALE', 'FEMALE')),
+                Sex = factor(Sex, levels = c('M','F'), labels = c('MALE', 'FEMALE')),
                 Tissue1 = Tissue)
 rownames(METADATA) = METADATA$sampleIdentifier
 
@@ -199,7 +200,7 @@ Following `r length(indRemoved)` samples were removed: `r indRemoved`
 Determine relationship between covariates
 ```{r covariates.clustering}
 primaryVariable <- c("CDR", "Tissue.Diagnosis", "Tissue.APOE4")
-FactorCovariates <- c("individualIdentifier", "batch", "RACE", "SEX", "Tissue.Diagnosis", "Tissue.APOE4")
+FactorCovariates <- c("individualIdentifier", "batch", "RACE", "Sex", "Tissue.Diagnosis", "Tissue.APOE4")
 ContCovariates <- c("CDR", "RIN", "RIN2", "AOD","PMI",  "PCT_PF_READS_ALIGNED", "PCT_CODING_BASES",
                     "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES")
 
@@ -322,7 +323,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>
 plotdata$label[!(plotdata$SampleID %in% indToRemove)] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=Diagnosis, size=RIN, shape = SEX))
+p <- p + geom_point(aes(color=Diagnosis, size=RIN, shape = Sex))
 p <- p + theme_bw() + theme(legend.position="right")
 p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
@@ -392,7 +393,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>
   dplyr::mutate(Region = factor(Region), batch = factor(batch))
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=Diagnosis, size=RIN, shape = SEX))
+p <- p + geom_point(aes(color=Diagnosis, size=RIN, shape = Sex))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(.~Region, scales = 'free_y')
 p
 ```
@@ -439,11 +440,11 @@ Since many covariates are correlated, re-normalising and re-adjusting COUNTS wit
 
 NOTE:
 1. Using a mixed effect model where random effect is chosen as individualIdentifier
-2. Adding batch and SEX a priori to variable selection
+2. Adding batch and Sex a priori to variable selection
 3. Primary variable of interest Tissue.Diagnosis is excluded from the pool of available covariates for selection
 ```{r iterative.norm, results='asis'}
 # Primary variable of interest
-postAdjustCovars = c('batch', 'SEX');
+postAdjustCovars = c('batch', 'Sex');
 
 # Assign residual covariates
 residualCovars = setdiff(preAdjustedSigCovars$significantCovars, 
@@ -551,7 +552,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>
   dplyr::mutate(Region = factor(Region))
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=Diagnosis, size=RIN, shape = SEX))
+p <- p + geom_point(aes(color=Diagnosis, size=RIN, shape = Sex))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(.~Region, scales = 'free_y')
 p
 ```
@@ -714,25 +715,25 @@ FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
-DE = lapply(1:4, function(i, FIT){
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
   topTable(FIT, coef=i, number = 50000, confint = T) %>%
     rownameToFirstColumn('ensembl_gene_id')
 }, FIT.CONTR)
 names(DE) = colnames(contrast)
 
 DE = DE %>% 
-  rbindlist(idcol = 'Comparison') %>%
+  data.table::rbindlist(idcol = 'Comparison') %>%
   dplyr::mutate(Comparison = gsub('Tissue','',Comparison),
                 Study = 'MSSM',
-                Direction = logFC/abs(logFC),
-                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
-                Direction = as.character(Direction)) %>%
-  dplyr::rename(Tissue = Comparison) %>%
-  dplyr::mutate(Comparison = 'CDR') %>%
-  left_join(GENE.PARAM %>%
-              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
-              unique())
-DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+                Sex = 'ALL') %>%
+  tidyr::separate(Comparison, c('Tissue', 'Comparison1'), sep = '\\.') %>%
+  dplyr::rename(Comparison = Comparison1) %>%
+  dplyr::left_join(GENE.PARAM %>%
+                     dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+                     unique())
+DE$Direction = 'NONE'
+DE$Direction[DE$adj.P.Val <= 0.05 & DE$logFC <= -log2(1.2)] = 'DOWN'
+DE$Direction[DE$adj.P.Val <= 0.05 & DE$logFC >= log2(1.2)] = 'UP'
 
 tmp = DE %>%
   dplyr::select(ensembl_gene_id, Comparison, Direction, Tissue) %>%
@@ -746,8 +747,8 @@ p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.posi
 p = p + facet_grid(Comparison+.~Tissue, scales = 'free')
 p
 
-all.diff.exp = list(CDR = DE)
-all.fit = list(CDR = FIT)
+all.diff.exp = list(SourceDiagnosis = DE)
+all.fit = list(SourceDiagnosis = FIT)
 ```
 
 ### Differential expression analysis (with Tissue.Diagnosis as primary variable)
@@ -796,28 +797,28 @@ FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
-DE = lapply(1:12, function(i, FIT){
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
   topTable(FIT, coef=i, number = 50000, confint = T) %>%
     rownameToFirstColumn('ensembl_gene_id')
 }, FIT.CONTR)
 names(DE) = colnames(contrast)
 
 DE = DE %>% 
-  rbindlist(idcol = 'Comparison') %>%
+  data.table::rbindlist(idcol = 'Comparison') %>%
   dplyr::mutate(Comparison = gsub('Tissue.Diagnosis','',Comparison),
                 Study = 'MSSM',
-                Direction = logFC/abs(logFC),
-                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
-                Direction = as.character(Direction)) %>%
+                Sex = 'ALL') %>%
   tidyr::separate(Comparison, c('from.state','to.state'), sep = '-') %>%
   tidyr::separate(from.state, c('Tissue','reference'), sep = '\\.') %>%
   tidyr::separate(to.state, c('Tissue1','against'), sep = '\\.') %>%
-  dplyr::mutate(Comparison = paste(reference, against, sep = '-')) %>%
+  tidyr::unite(Comparison, reference, against, sep = '-') %>%
   dplyr::select(-Tissue1) %>%
-  left_join(GENE.PARAM %>%
-              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
-              unique())
-DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+  dplyr::left_join(GENE.PARAM %>%
+                     dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+                     unique())
+DE$Direction = 'NONE'
+DE$Direction[DE$adj.P.Val <= 0.05 & DE$logFC <= -log2(1.2)] = 'DOWN'
+DE$Direction[DE$adj.P.Val <= 0.05 & DE$logFC >= log2(1.2)] = 'UP'
 
 tmp = DE %>%
   dplyr::select(ensembl_gene_id, Comparison, Direction, Tissue) %>%
@@ -881,7 +882,7 @@ FIT = lmFit(VOOM.WEIGHTS)
 # Fit contrast
 cntr = c()
 for (region in c('FP', 'STG', 'PHG', 'IFG')){
-  tmp = combn(paste0('Tissue.APOE4', region, '.', c('0', '1', '2')),2)
+  tmp = combn(paste0('Tissue.APOE4', region, '.', c('2', '1', '0')),2)
   cntr = c(cntr, apply(tmp, 2, paste, collapse = '-'))
 }
 
@@ -898,21 +899,21 @@ DE = lapply(1:dim(contrast)[2], function(i, FIT){
 names(DE) = colnames(contrast)
 
 DE = DE %>% 
-  rbindlist(idcol = 'Comparison') %>%
+  data.table::rbindlist(idcol = 'Comparison') %>%
   dplyr::mutate(Comparison = gsub('Tissue.APOE4','',Comparison),
                 Study = 'MSSM',
-                Direction = logFC/abs(logFC),
-                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
-                Direction = as.character(Direction)) %>%
+                Sex = 'ALL') %>%
   tidyr::separate(Comparison, c('from.state','to.state'), sep = '-') %>%
   tidyr::separate(from.state, c('Tissue','reference'), sep = '\\.') %>%
   tidyr::separate(to.state, c('Tissue1','against'), sep = '\\.') %>%
-  dplyr::mutate(Comparison = paste(reference, against, sep = '-')) %>%
+  tidyr::unite(Comparison, reference, against, sep = '-') %>%
   dplyr::select(-Tissue1) %>%
-  left_join(GENE.PARAM %>%
-              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
-              unique())
-DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+  dplyr::left_join(GENE.PARAM %>%
+                     dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+                     unique())
+DE$Direction = 'NONE'
+DE$Direction[DE$adj.P.Val <= 0.05 & DE$logFC <= -log2(1.2)] = 'DOWN'
+DE$Direction[DE$adj.P.Val <= 0.05 & DE$logFC >= log2(1.2)] = 'UP'
 
 tmp = DE %>%
   dplyr::select(ensembl_gene_id, Comparison, Direction, Tissue) %>%
@@ -930,16 +931,17 @@ all.diff.exp = c(all.diff.exp, list(APOE4 = DE))
 all.fit = c(all.fit, list(APOE4 = FIT))
 ```
 
-### Differential expression analysis (with Tissue.Diagnosis and Gender)
-Differential expression is performed on the Tissue.Diagnosis x Gender variable by controlling for covariates identified above
+### Differential expression analysis (with Tissue.Diagnosis and Sex)
+Differential expression is performed on the Tissue.Diagnosis x Sex variable by controlling for covariates identified above
 
 Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
 ```{r diff.exp3, fig.height=15, fig.width=13}
 ## Modeling Diagnosis, msex and age_death conjointly
-COVARIATES$Tissue.Diagnosis.SEX = paste(COVARIATES$Tissue.Diagnosis,COVARIATES$SEX, sep = '.') %>% factor
+COVARIATES$Tissue.Diagnosis.Sex = paste(COVARIATES$Tissue.Diagnosis,COVARIATES$Sex, sep = '.') %>% factor
 
 # Get design matrix
-DESIGN = getDesignMatrix(COVARIATES[, c('Tissue.Diagnosis.SEX', setdiff(postAdjustCovars, 'SEX')), drop = F], Intercept = F)
+DESIGN = getDesignMatrix(COVARIATES[, c('Tissue.Diagnosis.Sex', setdiff(postAdjustCovars, 'Sex')), drop = F], 
+                         Intercept = F)
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 
 # Re-estimate voom weights
@@ -953,60 +955,16 @@ VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 FIT = lmFit(VOOM.WEIGHTS)
 
 # Fit contrast
-cntr = c('Tissue.Diagnosis.SEXIFG.AD.MALE-Tissue.Diagnosis.SEXIFG.CONTROL.MALE',
-         'Tissue.Diagnosis.SEXIFG.AD.FEMALE-Tissue.Diagnosis.SEXIFG.CONTROL.FEMALE',
-         '0.5*Tissue.Diagnosis.SEXIFG.AD.MALE+0.5*Tissue.Diagnosis.SEXIFG.AD.FEMALE
-         -0.5*Tissue.Diagnosis.SEXIFG.CONTROL.MALE-0.5*Tissue.Diagnosis.SEXIFG.CONTROL.FEMALE',
-         '0.5*Tissue.Diagnosis.SEXIFG.AD.FEMALE+0.5*Tissue.Diagnosis.SEXIFG.CONTROL.FEMALE
-         -0.5*Tissue.Diagnosis.SEXIFG.AD.MALE-0.5*Tissue.Diagnosis.SEXIFG.CONTROL.FEMALE',
-         '0.5*Tissue.Diagnosis.SEXIFG.AD.FEMALE-0.5*Tissue.Diagnosis.SEXIFG.CONTROL.FEMALE
-         -0.5*Tissue.Diagnosis.SEXIFG.AD.MALE+0.5*Tissue.Diagnosis.SEXIFG.CONTROL.MALE',
-         'Tissue.Diagnosis.SEXFP.AD.MALE-Tissue.Diagnosis.SEXFP.CONTROL.MALE',
-         'Tissue.Diagnosis.SEXFP.AD.FEMALE-Tissue.Diagnosis.SEXFP.CONTROL.FEMALE',
-         '0.5*Tissue.Diagnosis.SEXFP.AD.MALE+0.5*Tissue.Diagnosis.SEXFP.AD.FEMALE
-         -0.5*Tissue.Diagnosis.SEXFP.CONTROL.MALE-0.5*Tissue.Diagnosis.SEXFP.CONTROL.FEMALE',
-         '0.5*Tissue.Diagnosis.SEXFP.AD.FEMALE+0.5*Tissue.Diagnosis.SEXFP.CONTROL.FEMALE
-         -0.5*Tissue.Diagnosis.SEXFP.AD.MALE-0.5*Tissue.Diagnosis.SEXFP.CONTROL.FEMALE',
-         '0.5*Tissue.Diagnosis.SEXFP.AD.FEMALE-0.5*Tissue.Diagnosis.SEXFP.CONTROL.FEMALE
-         -0.5*Tissue.Diagnosis.SEXFP.AD.MALE+0.5*Tissue.Diagnosis.SEXFP.CONTROL.MALE',
-         'Tissue.Diagnosis.SEXPHG.AD.MALE-Tissue.Diagnosis.SEXPHG.CONTROL.MALE',
-         'Tissue.Diagnosis.SEXPHG.AD.FEMALE-Tissue.Diagnosis.SEXPHG.CONTROL.FEMALE',
-         '0.5*Tissue.Diagnosis.SEXPHG.AD.MALE+0.5*Tissue.Diagnosis.SEXPHG.AD.FEMALE
-         -0.5*Tissue.Diagnosis.SEXPHG.CONTROL.MALE-0.5*Tissue.Diagnosis.SEXPHG.CONTROL.FEMALE',
-         '0.5*Tissue.Diagnosis.SEXPHG.AD.FEMALE+0.5*Tissue.Diagnosis.SEXPHG.CONTROL.FEMALE
-         -0.5*Tissue.Diagnosis.SEXPHG.AD.MALE-0.5*Tissue.Diagnosis.SEXPHG.CONTROL.FEMALE',
-         '0.5*Tissue.Diagnosis.SEXPHG.AD.FEMALE-0.5*Tissue.Diagnosis.SEXPHG.CONTROL.FEMALE
-         -0.5*Tissue.Diagnosis.SEXPHG.AD.MALE+0.5*Tissue.Diagnosis.SEXPHG.CONTROL.MALE',
-         'Tissue.Diagnosis.SEXSTG.AD.MALE-Tissue.Diagnosis.SEXSTG.CONTROL.MALE',
-         'Tissue.Diagnosis.SEXSTG.AD.FEMALE-Tissue.Diagnosis.SEXSTG.CONTROL.FEMALE',
-         '0.5*Tissue.Diagnosis.SEXSTG.AD.MALE+0.5*Tissue.Diagnosis.SEXSTG.AD.FEMALE
-         -0.5*Tissue.Diagnosis.SEXSTG.CONTROL.MALE-0.5*Tissue.Diagnosis.SEXSTG.CONTROL.FEMALE',
-         '0.5*Tissue.Diagnosis.SEXSTG.AD.FEMALE+0.5*Tissue.Diagnosis.SEXSTG.CONTROL.FEMALE
-         -0.5*Tissue.Diagnosis.SEXSTG.AD.MALE-0.5*Tissue.Diagnosis.SEXSTG.CONTROL.FEMALE',
-         '0.5*Tissue.Diagnosis.SEXSTG.AD.FEMALE-0.5*Tissue.Diagnosis.SEXSTG.CONTROL.FEMALE
-         -0.5*Tissue.Diagnosis.SEXSTG.AD.MALE+0.5*Tissue.Diagnosis.SEXSTG.CONTROL.MALE')
+cntr = c('Tissue.Diagnosis.SexIFG.AD.MALE-Tissue.Diagnosis.SexIFG.CONTROL.MALE',
+         'Tissue.Diagnosis.SexIFG.AD.FEMALE-Tissue.Diagnosis.SexIFG.CONTROL.FEMALE',
+         'Tissue.Diagnosis.SexFP.AD.MALE-Tissue.Diagnosis.SexFP.CONTROL.MALE',
+         'Tissue.Diagnosis.SexFP.AD.FEMALE-Tissue.Diagnosis.SexFP.CONTROL.FEMALE',
+         'Tissue.Diagnosis.SexPHG.AD.MALE-Tissue.Diagnosis.SexPHG.CONTROL.MALE',
+         'Tissue.Diagnosis.SexPHG.AD.FEMALE-Tissue.Diagnosis.SexPHG.CONTROL.FEMALE',
+         'Tissue.Diagnosis.SexSTG.AD.MALE-Tissue.Diagnosis.SexSTG.CONTROL.MALE',
+         'Tissue.Diagnosis.SexSTG.AD.FEMALE-Tissue.Diagnosis.SexSTG.CONTROL.FEMALE')
 contrast = makeContrasts(contrasts=cntr,
                          levels = colnames(FIT$coefficients))
-colnames(contrast) = c('IFG.AD.MALE-IFG.CONTROL.MALE',
-                       'IFG.AD.FEMALE-IFG.CONTROL.FEMALE',
-                       'IFG.AD.ALL-IFG.CONTROL.ALL',
-                       'IFG.ALL.FEMALE-IFG.ALL.MALE',
-                       'IFG.ALL.ALL-IFG.ALL.ALL',
-                       'FP.AD.MALE-FP.CONTROL.MALE',
-                       'FP.AD.FEMALE-FP.CONTROL.FEMALE',
-                       'FP.AD.ALL-FP.CONTROL.ALL',
-                       'FP.ALL.FEMALE-FP.ALL.MALE',
-                       'FP.ALL.ALL-FP.ALL.ALL',
-                       'PHG.AD.MALE-PHG.CONTROL.MALE',
-                       'PHG.AD.FEMALE-PHG.CONTROL.FEMALE',
-                       'PHG.AD.ALL-PHG.CONTROL.ALL',
-                       'PHG.ALL.FEMALE-PHG.ALL.MALE',
-                       'PHG.ALL.ALL-PHG.ALL.ALL',
-                       'STG.AD.MALE-STG.CONTROL.MALE',
-                       'STG.AD.FEMALE-STG.CONTROL.FEMALE',
-                       'STG.AD.ALL-STG.CONTROL.ALL',
-                       'STG.ALL.FEMALE-STG.ALL.MALE',
-                       'STG.ALL.ALL-STG.ALL.ALL')
 
 FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
@@ -1019,26 +977,30 @@ DE = lapply(1:dim(contrast)[2], function(i, FIT){
 names(DE) = colnames(contrast)
 
 DE = DE %>% 
-  rbindlist(idcol = 'Comparison') %>%
-  dplyr::mutate(Comparison = gsub('Tissue.Diagnosis','',Comparison),
-                Study = 'MSSM',
-                Direction = logFC/abs(logFC),
-                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
-                Direction = as.character(Direction)) %>%
-  left_join(GENE.PARAM %>%
-              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
-              unique())
-DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+  data.table::rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Comparison = gsub('Tissue.Diagnosis.Sex','',Comparison),
+                Study = 'MSSM') %>%
+  tidyr::separate(Comparison, c('from.state','to.state'), sep = '-') %>%
+  tidyr::separate(from.state, c('Tissue','reference','Sex'), sep = '\\.') %>%
+  tidyr::separate(to.state, c('Tissue1','against','Sex1'), sep = '\\.') %>%
+  tidyr::unite(Comparison, reference, against, sep = '-') %>%
+  dplyr::select(-Tissue1, -Sex1) %>%
+  dplyr::left_join(GENE.PARAM %>%
+                     dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+                     unique())
+DE$Direction = 'NONE'
+DE$Direction[DE$adj.P.Val <= 0.05 & DE$logFC <= -log2(1.2)] = 'DOWN'
+DE$Direction[DE$adj.P.Val <= 0.05 & DE$logFC >= log2(1.2)] = 'UP'
 
 tmp = DE %>%
-  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
-  group_by(Comparison, Direction) %>%
+  dplyr::select(ensembl_gene_id, Comparison, Tissue, Direction, Sex) %>%
+  dplyr::group_by(Comparison, Tissue, Direction,Sex) %>%
   dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
-  spread(Direction, FDR_0_05_FC_1.2) 
+  tidyr::spread(Direction, FDR_0_05_FC_1.2) 
 kable(tmp)
 
-all.diff.exp = c(all.diff.exp, list(Diagnosis.SEX = DE))
-all.fit = c(all.fit, list(Diagnosis.SEX = FIT))
+all.diff.exp = c(all.diff.exp, list(Diagnosis.Sex = DE))
+all.fit = c(all.fit, list(Diagnosis.Sex = FIT))
 ```
 
 ### Differential expression analysis (with Tissue.Diagnosis and AOD)
@@ -1065,23 +1027,13 @@ FIT = lmFit(VOOM.WEIGHTS)
 
 # Fit contrast
 cntr = c("FP.AD.AOD-FP.CONTROL.AOD",
-         "0.5*FP.AD.AOD+0.5*FP.CONTROL.AOD",
          "IFG.AD.AOD-IFG.CONTROL.AOD",
-         "0.5*IFG.AD.AOD+0.5*IFG.CONTROL.AOD",
          "PHG.AD.AOD-PHG.CONTROL.AOD",
-         "0.5*PHG.AD.AOD+0.5*PHG.CONTROL.AOD",
-         "STG.AD.AOD-STG.CONTROL.AOD",
-         "0.5*STG.AD.AOD+0.5*STG.CONTROL.AOD")
+         "STG.AD.AOD-STG.CONTROL.AOD")
 contrast = makeContrasts(contrasts=cntr,
                          levels = colnames(FIT$coefficients))
-colnames(contrast) = c("FP.AD.AOD-FP.CONTROL.AOD",
-                       "FP.ALL.AOD",
-                       "IFG.AD.AOD-IFG.CONTROL.AOD",
-                       "IFG.ALL.AOD",
-                       "PHG.AD.AOD-PHG.CONTROL.AOD",
-                       "PHG.ALL.AOD",
-                       "STG.AD.AOD-STG.CONTROL.AOD",
-                       "STG.ALL.AOD")
+colnames(contrast) = cntr
+
 FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
 
@@ -1093,20 +1045,23 @@ DE = lapply(1:dim(contrast)[2], function(i, FIT){
 names(DE) = colnames(contrast)
 
 DE = DE %>% 
-  rbindlist(idcol = 'Comparison') %>%
-  dplyr::mutate(Comparison = gsub('Tissue.Diagnosis','',Comparison),
-                Study = 'MSSM',
-                Direction = logFC/abs(logFC),
-                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
-                Direction = as.character(Direction)) %>%
-  left_join(GENE.PARAM %>%
-              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
-              unique())
-DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+  data.table::rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Study = 'MSSM', Sex = 'ALL') %>%
+  tidyr::separate(Comparison, c('from.state','to.state'), sep = '-') %>%
+  tidyr::separate(from.state, c('Tissue','reference','Sex'), sep = '\\.') %>%
+  tidyr::separate(to.state, c('Tissue1','against','Sex1'), sep = '\\.') %>%
+  tidyr::unite(Comparison, reference, against, sep = '-') %>%
+  dplyr::select(-Tissue1, -Sex1, -Sex) %>%
+  dplyr::left_join(GENE.PARAM %>%
+                     dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+                     unique())
+DE$Direction = 'NONE'
+DE$Direction[DE$adj.P.Val <= 0.05 & DE$logFC <= -log2(1.2)] = 'DOWN'
+DE$Direction[DE$adj.P.Val <= 0.05 & DE$logFC >= log2(1.2)] = 'UP'
 
 tmp = DE %>%
-  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
-  group_by(Comparison, Direction) %>%
+  dplyr::select(ensembl_gene_id, Tissue, Comparison, Direction) %>%
+  group_by(Comparison, Tissue, Direction) %>%
   dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
   spread(Direction, FDR_0_05_FC_1.2) 
 kable(tmp)
@@ -1116,12 +1071,12 @@ all.fit = c(all.fit, list(Diagnosis.AOD = FIT))
 ```
 
 ### Store files in synapse
-```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
+```{r synapse.store, include=FALSE, eval=FALSE, cache=FALSE}
 # Function to change entity ACL (also creates new acls if it doesn't exist)
 synChangeEntityACL <- function(id, new.racl){
   tryCatch({ 
     # If old acl exist update
-    old.acl = synGetEntityACL(id)
+    old.acl = synapseClient::synGetEntityACL(id)
     old.acl@resourceAccess = new.racl
     synUpdateEntityACL(old.acl)
   }, error = function(e){ 
@@ -1146,7 +1101,7 @@ new.racl = ResourceAccess(principalId = '3319864',
                                        accessType = c('READ', 'DOWNLOAD')))
 
 # Set annotations
-all.annotations = annotations(synGet(COUNT_ID))
+all.annotations = annotations(synapseClient::synGet(COUNT_ID))
 
 # Code
 CODE <- Folder(name = "MSSM Reprocessed RNASeq (Normalised)", parentId = parentId)
@@ -1173,7 +1128,7 @@ PROCESSED_COUNTS$filteredExprMatrix$counts %>%
 COUNT_OBJ = File('MSSM_FP_STG_PHG_IFG_Counts.tsv', name = 'Counts (filtered raw)', parentId = CODE$properties$id)
 all.annotations$dataSubType = 'filteredCounts'
 annotations(COUNT_OBJ) = all.annotations
-COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+COUNT_OBJ = synStore(COUNT_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store filtered counts
 NEW.COUNTS %>%
@@ -1182,7 +1137,7 @@ NEW.COUNTS %>%
 ECOUNT_OBJ = File('MSSM_FP_STG_PHG_IFG_eCounts.tsv', name = 'Counts (estimated)', parentId = CODE$properties$id)
 all.annotations@annotations@stringAnnotations$dataSubType = 'estimatedCounts'
 annotations(ECOUNT_OBJ) = all.annotations
-ECOUNT_OBJ = synStore(ECOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+ECOUNT_OBJ = synStore(ECOUNT_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store logCPM
 CQN.GENE_EXPRESSION$y %>%
@@ -1191,7 +1146,7 @@ CQN.GENE_EXPRESSION$y %>%
 LCOUNT_OBJ = File('MSSM_FP_STG_PHG_IFG_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
 all.annotations@annotations@stringAnnotations$dataSubType = 'filteredLCPM'
 annotations(LCOUNT_OBJ) = all.annotations
-LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store cqn offsets
 CQN.GENE_EXPRESSION$offset %>%
@@ -1200,7 +1155,7 @@ CQN.GENE_EXPRESSION$offset %>%
 OFFSET_OBJ = File('MSSM_FP_STG_PHG_IFG_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
 all.annotations@annotations@stringAnnotations$dataSubType = 'offset'
 annotations(OFFSET_OBJ) = all.annotations
-OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store design matrix
 MODEL1 %>%
@@ -1209,7 +1164,7 @@ MODEL1 %>%
 DM_OBJ = File('MSSM_FP_STG_PHG_IFG_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
 all.annotations@annotations@stringAnnotations$dataSubType = 'designMatrix'
 annotations(DM_OBJ) = all.annotations
-DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+DM_OBJ = synStore(DM_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 synChangeEntityACL(DM_OBJ@properties$id, new.racl)
 
 # Store surrogate variables
@@ -1219,7 +1174,7 @@ SURR.VAR %>%
 SURR_OBJ = File('MSSM_FP_STG_PHG_IFG_SurVar.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
 all.annotations@annotations@stringAnnotations$dataSubType = 'surrogateVariables'
 annotations(SURR_OBJ) = all.annotations
-SURR_OBJ = synStore(SURR_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+SURR_OBJ = synStore(SURR_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store residual gene expression for eQTL analysis
 RESIDUAL.SVA.GENE_EXPRESSION %>%
@@ -1230,7 +1185,7 @@ eEXP_OBJ = File('MSSM_FP_STG_PHG_IFG_eQTLResidualExpression.tsv',
                 parentId = CODE$properties$id)
 all.annotations@annotations@stringAnnotations$dataSubType = 'residualGeneExpForeQTL'
 annotations(eEXP_OBJ) = all.annotations
-eEXP_OBJ = synStore(eEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+eEXP_OBJ = synStore(eEXP_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store residual gene expression for network analysis
 RESIDUAL.NET.GENE_EXPRESSION %>%
@@ -1241,7 +1196,7 @@ nEXP_OBJ = File('MSSM_FP_STG_PHG_IFG_netResidualExpression.tsv',
                 parentId = CODE$properties$id)
 all.annotations@annotations@stringAnnotations$dataSubType = 'residualGeneExpForNetAnlz'
 annotations(nEXP_OBJ) = all.annotations
-nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+nEXP_OBJ = synStore(nEXP_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store differential expression results
 rbindlist(all.diff.exp, use.names = T, fill = T, idcol = 'Model') %>%
@@ -1250,7 +1205,7 @@ DEXP_OBJ = File('MSSM_FP_STG_PHG_IFG_DiffExpression.tsv', name = 'Differential E
                 parentId = CODE$properties$id)
 all.annotations@annotations@stringAnnotations$dataSubType = 'diffExp'
 annotations(DEXP_OBJ) = all.annotations
-DEXP_OBJ = synStore(DEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+DEXP_OBJ = synStore(DEXP_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store all differential expression models
 save(all.fit, file = 'MSSM_FP_STG_PHG_IFG_Models.RData')
@@ -1260,7 +1215,7 @@ FIT_OBJ = File('MSSM_FP_STG_PHG_IFG_Models.RData',
 all.annotations@annotations@stringAnnotations$dataSubType = 'modelFits'
 all.annotations@annotations@stringAnnotations$fileFormat = 'RData'
 annotations(FIT_OBJ) = all.annotations
-FIT_OBJ = synStore(FIT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+FIT_OBJ = synStore(FIT_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 synChangeEntityACL(FIT_OBJ@properties$id, new.racl)
 
 # Delete folder acl
@@ -1283,7 +1238,7 @@ synDeleteEntityACL(CODE@properties$id)
 library(synapseClient)
 library(knit2synapse) # get the package from devtools::install_github('Sage-Bionetworks/knit2synapse')
 
-synapseLogin()
+synapseClient::synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./MSSM_geneLevel.Rmd",
                                  parentId = "syn8672415",
