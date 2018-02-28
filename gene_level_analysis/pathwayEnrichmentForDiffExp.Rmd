@@ -10,7 +10,7 @@ editor_options:
 library(synapseClient)
 library(knit2synapse) # get the package from devtools::install_github('Sage-Bionetworks/knit2synapse')
 
-synapseLogin()
+synapseClient::synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "pathwayEnrichmentForDiffExp.Rmd",
                                  parentId = "syn8672415",
@@ -31,7 +31,7 @@ library(synapseClient)
 library(knitr)
 library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
 
-synapseLogin()
+synapseClient::synapseLogin()
 
 library(doParallel)
 library(foreach)
@@ -50,7 +50,7 @@ knitr::opts_chunk$set(
   cache = TRUE)
 ```
 
-```{r synapse.parameters, include=FALSE, cache=TRUE}
+```{r synapse.parameters, include=FALSE, cache=FALSE}
 parentId = 'syn8672415';
 activityName = 'Enrichment Analysis';
 activityDescription = 'Enrichment analysis of reprocessed rnaseq from all 7 brain regions';
@@ -65,7 +65,7 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('gene_level
 ## Data download
 ### Get summary differential expression results from synapse
 ```{r get.diffExp}
-dexp = fread(synGet('syn11180450')@filePath, data.table = FALSE)
+dexp = fread(synapseClient::synGet('syn11180450')@filePath, data.table = FALSE)
 all.used.ids = c('syn11180450')
 
 bck.genes = unique(dexp$hgnc_symbol)
@@ -74,7 +74,7 @@ bck.genes = unique(dexp$hgnc_symbol)
 ### Get all gene sets
 ```{r get.gs, cache = FALSE}
 # Get enrichr gene sets from synapse
-load(synGet('syn4867851')@filePath)
+load(synapseClient::synGet('syn4867851')@filePath)
 all.used.ids = c('syn4867851', all.used.ids)
 # 'Chromosome_Location', 'Cross_Species_Phenotype', 'Disease_Signatures_from_GEO_down', 'Disease_Signatures_from_GEO_up',
 # 'ENCODE_TF_ChIP-seq','Mouse_Gene_Atlas', 'OMIM_Disease', 'OMIM_Expanded', 'TargetScan_microRNA',
@@ -93,7 +93,7 @@ gs$HypothesisFree = do.call(c, GeneSets) %>%
       sapply(function(x){ x[[1]] })
   })
 
-tmp = synTableQuery('select * from syn11707052')@values
+tmp = synapseClient::synTableQuery('select * from syn11707052')@values
 all.used.ids = c(all.used.ids, 'syn11707052')
 
 gs$CellType = tmp %>%
@@ -142,6 +142,6 @@ enrich.results = dexp %>%
 
 fwrite(enrich.results, file = 'enrichmentResults.tsv', sep = '\t')
 obj = File('enrichmentResults.tsv', name = 'Enrichment Results (for all differential expression)', parentId = parentId)
-obj = synStore(obj, executed = thisFile, used = all.used.ids, 
-               activityName = activityName, activityDescription = activityDescription)
+obj = synapseClient::synStore(obj, executed = thisFile, used = all.used.ids, 
+                              activityName = activityName, activityDescription = activityDescription)
 ```
