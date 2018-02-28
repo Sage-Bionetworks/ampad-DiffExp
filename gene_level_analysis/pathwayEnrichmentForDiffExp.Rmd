@@ -1,0 +1,147 @@
+---
+title: "Enrichment analysis for differential expression results"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r knit2synapse, eval=FALSE}
+library(synapseClient)
+library(knit2synapse) # get the package from devtools::install_github('Sage-Bionetworks/knit2synapse')
+
+synapseClient::synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "pathwayEnrichmentForDiffExp.Rmd",
+                                 parentId = "syn8672415",
+                                 entityName = 'Enrichment analysis of all differentialy expressed genes')
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(CovariateAnalysis) # get the package from devtools::install_github('th1vairam/CovariateAnalysis@dev')
+library(data.table)
+library(plyr)
+library(tidyverse)
+library(biomaRt)
+
+library(synapseClient)
+library(knitr)
+library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
+
+synapseClient::synapseLogin()
+
+library(doParallel)
+library(foreach)
+
+cl = makeCluster(detectCores()-2)
+registerDoParallel(cl)
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE, cache=FALSE}
+parentId = 'syn8672415';
+activityName = 'Enrichment Analysis';
+activityDescription = 'Enrichment analysis of reprocessed rnaseq from all 7 brain regions';
+
+thisFileName <- 'pathwayEnrichmentForDiffExp.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/ampad-DiffExp", ref="branch", refName='geneLevelAnalysis')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('gene_level_analysis/',thisFileName))
+```
+
+## Data download
+### Get summary differential expression results from synapse
+```{r get.diffExp}
+dexp = fread(synapseClient::synGet('syn11180450')@filePath, data.table = FALSE)
+all.used.ids = c('syn11180450')
+
+bck.genes = unique(dexp$hgnc_symbol)
+```
+
+### Get all gene sets
+```{r get.gs, cache = FALSE}
+# Get enrichr gene sets from synapse
+load(synapseClient::synGet('syn4867851')@filePath)
+all.used.ids = c('syn4867851', all.used.ids)
+# 'Chromosome_Location', 'Cross_Species_Phenotype', 'Disease_Signatures_from_GEO_down', 'Disease_Signatures_from_GEO_up',
+# 'ENCODE_TF_ChIP-seq','Mouse_Gene_Atlas', 'OMIM_Disease', 'OMIM_Expanded', 'TargetScan_microRNA',
+# 'TF-LOF_Expression_from_GEO', 'TRANSFAC_and_JASPAR_PWMs', 'Single_Gene_Perturbations_from_GEO_up',
+# 'Single_Gene_Perturbations_from_GEO_down', 'Aging_Perturbations_from_GEO_down', 'Aging_Perturbations_from_GEO_up', 
+# 'Disease_Perturbations_from_GEO_down', 'Disease_Perturbations_from_GEO_up', 'DrugMatrix', 'Drug_Perturbations_from_GEO_down',
+# 'Drug_Perturbations_from_GEO_up', 'GTEx_Tissue_Sample_Gene_Expression_Profiles_down',
+# 'GTEx_Tissue_Sample_Gene_Expression_Profiles_up', 'Jensen_DISEASES', 'RNA-Seq_Disease_Gene_and_Drug_Signatures_from_GEO'
+
+GeneSets = GeneSets[c('BioCarta', 'GO_Biological_Process', 'KEGG_2015', 'Reactome', 
+                      'Panther', 'dbGaP', 'WikiPathways')]
+gs = list()
+gs$HypothesisFree = do.call(c, GeneSets) %>%
+  lapply(function(y){
+    str_split(y, '\\,') %>% 
+      sapply(function(x){ x[[1]] })
+  })
+
+tmp = synapseClient::synTableQuery('select * from syn11707052')@values
+all.used.ids = c(all.used.ids, 'syn11707052')
+
+gs$CellType = tmp %>%
+  dplyr::filter(GeneSet %in% grep('Zhang:', unique(tmp$GeneSet), value = T)) %>%
+  plyr::dlply(.(GeneSet), .fun = function(x){
+    unique(x$external_gene)
+  })
+
+gs$HypothesisDriven = tmp %>%
+  dplyr::filter(!(GeneSet %in% grep('Zhang:', unique(tmp$GeneSet), value = T))) %>%
+  plyr::dlply(.(GeneSet), .fun = function(x){
+    unique(x$external_gene)
+  })
+
+gs = purrr::map(gs, function(geneSet, bckGenes){
+  geneSet = purrr::map(geneSet, function(x, bckGenes){
+    intersect(x, bckGenes) %>% unique()
+  }, bckGenes)
+  
+  n = sapply(geneSet, length)
+  geneSet = geneSet[n >= 10 & n <= 3000]
+}, bck.genes)
+```
+
+### Perform enrichment analysis
+```{r enrich.de}
+enrich.results = dexp %>%
+  dplyr::filter(Direction != 'NONE') %>%
+  plyr::ddply(.(Model, Tissue, Comparison, Sex, Direction), .fun = function(x, gs, bckGenes){
+    gsToTest = setdiff(unique(x$hgnc_symbol),'')
+    if (length(gsToTest) >= 10){
+      enrich = plyr::ldply(gs, .fun = function(y, gsToTest, bckGenes){
+        plyr::ldply(y, .fun = function(gsToTest1, gsToTest, bckGenes){
+          CovariateAnalysis::fisherEnrichment(gsToTest1, gsToTest, bckGenes)
+        }, gsToTest, bckGenes, .id = 'SetName')
+      }, gsToTest, bckGenes, .id = 'Category')
+      fwrite(enrich, 
+             paste(unique(c(x$Model, x$Tissue, x$Comparison, x$Sex, x$Direction)), collapse = '.') %>%
+               paste0('.tsv'))
+    } else {
+      enrich = data.frame()
+    }
+    return(enrich)
+  }, 
+  gs, bck.genes, .parallel = T, .paropts = list(.packages = c('CovariateAnalysis', 'plyr', 'dplyr','data.table')))
+
+fwrite(enrich.results, file = 'enrichmentResults.tsv', sep = '\t')
+obj = File('enrichmentResults.tsv', name = 'Enrichment Results (for all differential expression)', parentId = parentId)
+obj = synapseClient::synStore(obj, executed = thisFile, used = all.used.ids, 
+                              activityName = activityName, activityDescription = activityDescription)
+```
