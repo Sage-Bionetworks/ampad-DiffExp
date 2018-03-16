@@ -1,0 +1,48 @@
+---
+title: "Enrichment analysis figures"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_notebook
+---
+```{r libs}
+library(CovariateAnalysis)
+library(data.table)
+library(plyr)
+library(tidyverse)
+
+library(ComplexHeatmap)
+
+library(synapseClient)
+library(knitr)
+library(githubr)
+
+synapseLogin()
+```
+Cell type specific
+```{r get.data}
+enrich = fread(synGet('syn11714360')@filePath, data.table = F) %>%
+  dplyr::filter(Model %in% c('Diagnosis', 'Diagnosis.Sex'),
+                Comparison == 'AD-CONTROL',
+                Category == 'CellType') %>%
+  dplyr::group_by(Model, Tissue, Comparison, Sex, Direction, Category) %>%
+  dplyr::mutate(FDR = p.adjust(pval, method = 'fdr'),
+                SetName = gsub('Zhang:','',SetName))
+
+my_theme_bw <- function(){
+  theme_grey(base_size = base_size, base_family = base_family) %+replace% 
+        theme(panel.background = element_rect(fill = "white", 
+            colour = NA), panel.border = element_rect(fill = NA, 
+            colour = "grey20"), panel.grid.major = element_line(colour = "grey92"), 
+            panel.grid.minor = element_line(colour = "grey92", 
+                size = 0.25), strip.background = element_rect(fill = "grey85", 
+                colour = "grey20"), legend.key = element_rect(fill = "white", 
+                colour = NA), complete = TRUE)
+}
+p = ggplot(enrich, aes(x = SetName, y = Tissue, color = -log10(FDR), size = Odds.Ratio)) + geom_point()
+p = p + facet_grid(Direction+.~Sex) 
+p = p + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p = p + scale_color_gradient(low = viridis::viridis(5)[5], high = viridis::viridis(5)[1])
+
+p
+```
+
