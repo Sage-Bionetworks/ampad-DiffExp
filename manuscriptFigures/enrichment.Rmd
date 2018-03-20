@@ -18,31 +18,115 @@ library(githubr)
 
 synapseLogin()
 ```
-Cell type specific
+Get enrichment results
 ```{r get.data}
 enrich = fread(synGet('syn11714360')@filePath, data.table = F) %>%
-  dplyr::filter(Model %in% c('Diagnosis', 'Diagnosis.Sex'),
-                Comparison == 'AD-CONTROL',
-                Category == 'CellType') %>%
+  dplyr::filter((Model == 'Diagnosis' & Sex == 'ALL') | 
+                  (Model == 'Diagnosis.Sex' & Sex != 'ALL'),
+                Comparison == 'AD-CONTROL') %>%
   dplyr::group_by(Model, Tissue, Comparison, Sex, Direction, Category) %>%
   dplyr::mutate(FDR = p.adjust(pval, method = 'fdr'),
-                SetName = gsub('Zhang:','',SetName))
+                SetName = gsub('Zhang:','',SetName)) %>%
+  dplyr::ungroup()
 
-my_theme_bw <- function(){
-  theme_grey(base_size = base_size, base_family = base_family) %+replace% 
-        theme(panel.background = element_rect(fill = "white", 
-            colour = NA), panel.border = element_rect(fill = NA, 
-            colour = "grey20"), panel.grid.major = element_line(colour = "grey92"), 
-            panel.grid.minor = element_line(colour = "grey92", 
-                size = 0.25), strip.background = element_rect(fill = "grey85", 
-                colour = "grey20"), legend.key = element_rect(fill = "white", 
-                colour = NA), complete = TRUE)
-}
-p = ggplot(enrich, aes(x = SetName, y = Tissue, color = -log10(FDR), size = Odds.Ratio)) + geom_point()
-p = p + facet_grid(Direction+.~Sex) 
-p = p + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-p = p + scale_color_gradient(low = viridis::viridis(5)[5], high = viridis::viridis(5)[1])
+enrich.meta = fread(synGet('syn11973632')@filePath, data.table = F) %>%
+  tidyr::separate(MetaSetName, c('a','b','c','d','e'), sep = '\\.') %>% 
+  dplyr::filter(a == 'ad')
 
+enrich.meta$Sex = 'ALL'
+enrich.meta$Sex[enrich.meta$c == 'FEMALE'] = 'FEMALE'
+enrich.meta$Sex[enrich.meta$c == 'MALE'] = 'MALE'
+
+enrich.meta$Model = 'ALL'
+enrich.meta$Model[enrich.meta$c == 'fixed' | enrich.meta$d == 'fixed'] = 'FIXED'
+enrich.meta$Model[enrich.meta$c == 'random' | enrich.meta$d == 'random'] = 'RANDOM'
+
+enrich.meta$Direction = 'NONE'
+enrich.meta$Direction[enrich.meta$d == 'UP' | enrich.meta$e == 'UP'] = 'UP'
+enrich.meta$Direction[enrich.meta$d == 'DOWN' | enrich.meta$e == 'DOWN'] = 'DOWN'
+
+enrich.meta = enrich.meta %>%
+  dplyr::select(-a,-b,-c,-d,-e) %>%
+  dplyr::group_by(Model, Sex, Direction, Category) %>%
+  dplyr::mutate(FDR = p.adjust(pval, method = 'fdr'),
+                SetName = gsub('Zhang:','',SetName)) %>%
+  dplyr::ungroup()
+```
+Celltype graphs
+```{r cell.type}
+enrich.all = list(IndividualAnalysis = enrich %>%
+                    dplyr::select(-Comparison, -Model), 
+                  MetaAnalysis = enrich.meta %>%
+                    dplyr::rename(Tissue = Model)) %>%
+  data.table::rbindlist(use.names = T, fill = T, idcol = 'Model') %>%
+  dplyr::filter(Category == 'CellType', SetName != 'NewOligos') %>%
+  dplyr::mutate(SetName = factor(SetName, 
+                                 levels = c("Microglia", "Astrocyte", "Endothelial", 
+                                            "MyelinOligos", "OPC", "Neuron")),
+                Tissue = factor(Tissue, 
+                                levels = c('FIXED', 'RANDOM', 'PHG', 'TCX', 'STG', 
+                                           'IFG', 'DLPFC', 'CBE', 'FP')),
+                Model = factor(Model, levels = c('MetaAnalysis', 'IndividualAnalysis')))
+
+p = ggplot(enrich.all, aes(x = SetName, y = Tissue, color = -log10(FDR), size = Odds.Ratio)) + geom_point()
+p = p + facet_grid(Direction+.~Sex) + xlab('') 
+p = p + theme_bw() %+replace% theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), 
+                                    legend.position = 'top')
+p = p + scale_color_gradientn(colours = c('grey', 'grey', viridis::viridis(2)[2], 
+                                          viridis::viridis(2)[1], viridis::viridis(2)[1]),
+                              values = c(0, 0.01625, 0.02875, 0.07, 1))
+p
+```
+AD related genesets
+```{r ad.related}
+enrich.all = list(IndividualAnalysis = enrich %>%
+                    dplyr::select(-Comparison, -Model), 
+                  MetaAnalysis = enrich.meta %>%
+                    dplyr::rename(Tissue = Model)) %>%
+  data.table::rbindlist(use.names = T, fill = T, idcol = 'Model') %>%
+  dplyr::filter(Category == 'HypothesisDriven') %>%
+  dplyr::mutate(Tissue = factor(Tissue, 
+                                levels = c('FIXED', 'RANDOM', 'PHG', 'TCX',  
+                                           'DLPFC', 'CBE', 'FP', 'STG', 'IFG')),
+                Model = factor(Model, levels = c('MetaAnalysis', 'IndividualAnalysis')))
+
+p = ggplot(enrich.all, aes(x = SetName, y = Tissue, color = -log10(FDR), size = Odds.Ratio)) + geom_point()
+p = p + facet_grid(Direction+.~Sex) + xlab('') 
+p = p + theme_bw() %+replace% theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), 
+                                    legend.position = 'top')
+p = p + scale_color_gradientn(colours = c('grey', 'grey', viridis::viridis(2)[2], 
+                                          viridis::viridis(2)[1], viridis::viridis(2)[1]),
+                              values = c(0, 0.01625, 0.02875, 0.07, 1))
 p
 ```
 
+Hypothesis free genesets
+```{r hf.related}
+enrich.all = list(IndividualAnalysis = enrich %>%
+                    dplyr::select(-Comparison, -Model), 
+                  MetaAnalysis = enrich.meta %>%
+                    dplyr::rename(Tissue = Model)) %>%
+  data.table::rbindlist(use.names = T, fill = T, idcol = 'Model') %>%
+  dplyr::filter(Category == 'HypothesisFree') %>%
+  dplyr::mutate(Tissue = factor(Tissue, 
+                                levels = c('FIXED', 'RANDOM', 'PHG', 'TCX',  
+                                           'DLPFC', 'CBE', 'FP', 'STG', 'IFG')),
+                Model = factor(Model, levels = c('MetaAnalysis', 'IndividualAnalysis'))) %>%
+  dplyr::select(-Genes)
+
+tmp = dplyr::filter(enrich, FDR <= 0.05, Sex == 'ALL', Direction == 'UP') %>% dplyr::group_by(SetName) %>% dplyr::summarise(count = n()) %>% dplyr::arrange(desc(count))
+
+
+%>%
+  dplyr::group_by(Model, Tissue, Sex, Direction) %>%
+  dplyr::arrange(desc(Odds.Ratio))
+
+p = ggplot(enrich.all, aes(y = SetName, x = Tissue, color = -log10(FDR), size = Odds.Ratio)) + geom_point()
+p = p + facet_grid(Direction+.~Sex) + xlab('') 
+p = p + theme_bw() %+replace% theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), 
+                                    legend.position = 'top')
+p = p + scale_color_gradientn(colours = c('grey', 'grey', viridis::viridis(2)[2], 
+                                          viridis::viridis(2)[1], viridis::viridis(2)[1]),
+                              values = c(0, 0.01625, 0.02875, 0.07, 1))
+p
+```

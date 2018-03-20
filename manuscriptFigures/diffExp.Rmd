@@ -308,7 +308,7 @@ ggarrange(plotlist = pl, ncol = 1, nrow = 2)
 ### Store in synapse
 ```{r syn.store, eval = FALSE, include = FALSE}
 # Get github commit
-thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD_manuscript')
+thisRepo <- getRepo(repository = "th1vairam/ampad-DiffExp", ref="branch", refName='manuscriptPrep')
 thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('manuscriptFigures/diffExp.Rmd'))
 
 obj = rmarkdown::render('diffExp.Rmd', output_format = 'html_document')
