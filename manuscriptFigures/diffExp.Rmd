@@ -16,11 +16,11 @@ library(circlize)
 library(gridExtra)
 library(ggpubr)
 
-library(synapseClient)
+library(synapser)
 library(githubr)
 library(knitr)
 
-synapseLogin()
+synLogin()
 
 knitr::opts_chunk$set(
   echo = FALSE,
@@ -35,7 +35,7 @@ knitr::opts_chunk$set(
 ```{r technical.cov}
 # Function to read tsv/csv files from synapse
 downloadFile <- function(id){ 
-  fread(synGet(id)@filePath, data.table = F)
+  fread(synGet(id)$path, data.table = F)
 }
 
 # Read covariates
@@ -302,6 +302,27 @@ pl = list();pl[[1]] = p
 p = ggplot(meta.dexp, aes(x = tau, fill = Sex)) + geom_density()
 pl[[2]] = p
 ggarrange(plotlist = pl, ncol = 1, nrow = 2)
+```
+### Similarity of signatures between male and females
+```{r ovlp.stats.male.female}
+background.genes = dexp$ensembl_gene_id
+dexp.enrich.plots = dexp %>%
+  dplyr::filter(Model == 'Diagnosis.Sex',
+                Sex %in% c('FEMALE','MALE'),
+                Comparison == 'AD-CONTROL',
+                Direction != 'NONE') %>%
+  plyr::ddply(.(Tissue, Direction), .fun = function(x, background.genes){
+    if (length(unique(x$Sex)) == 2){
+      gr = x %>%
+        plyr::dlply(.(Sex), .fun = function(x){unique(x$ensembl_gene_id)})
+      CovariateAnalysis::fisherEnrichment(gr[[1]],gr[[2]],backgroundGenes)
+    }
+  }, backgroundGenes) %>%
+  dplyr::mutate(fdr = p.adjust(pval, method = 'BH'))
+    
+p = ggplot(dexp.enrich.plots, aes(x = Tissue, y = -log10(fdr), size = Odds.Ratio, color = Direction)) + geom_point()
+p = p + geom_hline(yintercept = -log10(0.05))
+
 ```
 
 
