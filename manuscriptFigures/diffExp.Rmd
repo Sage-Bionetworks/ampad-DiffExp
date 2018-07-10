@@ -1,0 +1,342 @@
+---
+title: "Differential expression figures"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_notebook
+---
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+# Load required libraries
+library(CovariateAnalysis)
+library(data.table)
+library(plyr)
+library(tidyverse)
+
+library(ComplexHeatmap)
+library(circlize)
+library(gridExtra)
+library(ggpubr)
+
+library(synapser)
+library(githubr)
+library(knitr)
+
+synLogin()
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+### Covariates
+```{r technical.cov}
+# Function to read tsv/csv files from synapse
+downloadFile <- function(id){ 
+  fread(synGet(id)$path, data.table = F)
+}
+
+# Read covariates
+covar.ids = c(ROSMAP = 'syn8456631', MSSM = 'syn8484996', MAYO = 'syn8466814')
+all.used.ids = as.character(covar.ids)
+covar =  covar.ids %>%
+  lapply(downloadFile)
+
+covar$ROSMAP = covar$ROSMAP %>%
+  dplyr::select(SampleID, Sex, Diagnosis, APOE4, PCT_CODING_BASES, PCT_INTERGENIC_BASES, 
+                PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES) %>%
+  dplyr::mutate(Tissue = 'DLPFC')
+
+covar$MSSM = covar$MSSM %>%
+  dplyr::select(SampleID, Sex, Tissue.Diagnosis, Tissue.APOE4, PCT_CODING_BASES, PCT_INTERGENIC_BASES, 
+                PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES) %>%
+  tidyr::separate(Tissue.Diagnosis, c('Tissue1', 'Diagnosis'), sep = '\\.') %>%
+  tidyr::separate(Tissue.APOE4, c('Tissue', 'APOE4'), sep = '\\.')
+
+covar$MAYO = covar$MAYO %>%
+  dplyr::select(SampleID, Sex, Tissue.Diagnosis, Tissue.APOE4, PCT_CODING_BASES, PCT_INTERGENIC_BASES, 
+                PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES) %>%
+  tidyr::separate(Tissue.Diagnosis, c('Tissue1', 'Diagnosis'), sep = '\\.') %>%
+  tidyr::separate(Tissue.APOE4, c('Tissue', 'APOE4'), sep = '\\.')
+
+covar = covar %>%
+  data.table::rbindlist(use.names = T, fill = T, idcol = 'Study') %>%
+  dplyr::select(-Tissue1)
+```
+Total number of samples (per sex)
+```{r total.sample}
+tmp = covar %>%
+  dplyr::filter(Diagnosis != 'OTHER') %>%
+  dplyr::select(Study, SampleID, Tissue, Diagnosis, Sex) %>%
+  dplyr::group_by(Study, Tissue, Diagnosis, Sex) %>%
+  dplyr::count() %>%
+  tidyr::unite(Diagnosis.Sex, Diagnosis, Sex, sep = '.') %>%
+  tidyr::spread(Diagnosis.Sex, n) 
+kable(tmp)
+```
+Different types of RNAs
+```{r diff.rnas}
+tmp = covar %>%
+  dplyr::select(Study, PCT_CODING_BASES, PCT_INTERGENIC_BASES, 
+                PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES) %>%
+  tidyr::gather(Feature, Value, -Study) %>%
+  dplyr::group_by(Study, Feature) %>%
+  dplyr::summarise(Value = mean(Value, na.rm = T)) %>%
+  tidyr::spread(Feature, Value) %>%
+  dplyr::group_by(Study) %>%
+  dplyr::mutate(PCT_UTR_BASES = 1 - PCT_CODING_BASES - PCT_INTERGENIC_BASES - PCT_INTRONIC_BASES - PCT_RIBOSOMAL_BASES) %>%
+  tidyr::gather(TypeOfRNA, Value, -Study) 
+
+p = ggplot(tmp, aes(x = Study, y= Value, fill = TypeOfRNA)) + geom_bar(stat = 'identity')
+p = p + ylab('Fraction of aligned reads') + xlab('Study') + theme_bw()
+p
+```
+### Differential Expression and meta differential expression
+```{r get.results}
+dexp = downloadFile('syn11180450')
+all.used.ids = c(all.used.ids, 'syn11180450')
+
+ndexp = dexp %>%
+  dplyr::filter(Model %in% c('Diagnosis', 'Diagnosis.Sex'),
+                Comparison == 'AD-CONTROL') %>% 
+  dplyr::filter(Direction != 'NONE',
+                !(Model == 'Diagnosis.Sex' & Sex == 'ALL')) %>%
+  dplyr::group_by(Study, Tissue, Direction, Sex) %>% 
+  dplyr::summarise(count = length(unique(ensembl_gene_id))) %>%
+  tidyr::unite(Sex.Direction, Sex, Direction, sep = '.') %>%
+  tidyr::spread(Sex.Direction, count)
+kable(ndexp)
+
+meta.dexp = downloadFile('syn11914808')
+all.used.ids = c(all.used.ids, 'syn11914808')
+tmp = meta.dexp %>%
+  dplyr::select(ensembl_gene_id, TE.fixed, TE.random, fdr.fixed, fdr.random) %>%
+  tidyr::gather(Feature, Value, -ensembl_gene_id) %>%
+  tidyr::separate(Feature, c('Feature1', 'Model'), sep = '\\.') %>%
+  tidyr::spread(Feature1, Value) %>%
+  dplyr::filter(fdr <= 0.05, abs(TE) >= 0.2)
+tmp$Direction[tmp$TE <= 0] = 'DOWN'
+tmp$Direction[tmp$TE >= 0] = 'UP'
+tmp = tmp %>%
+  dplyr::group_by(Model, Direction) %>%
+  dplyr::summarise(count = length(unique(ensembl_gene_id))) %>%
+  tidyr::spread(Direction, count)
+kable(tmp)
+
+meta.dexp = downloadFile('syn11914809')
+all.used.ids = c(all.used.ids, 'syn11914809')
+tmp = meta.dexp %>%
+  dplyr::select(ensembl_gene_id, Sex, TE.fixed, TE.random, fdr.fixed, fdr.random) %>%
+  tidyr::gather(Feature, Value, -ensembl_gene_id, -Sex) %>%
+  tidyr::separate(Feature, c('Feature1', 'Model'), sep = '\\.') %>%
+  tidyr::spread(Feature1, Value) %>%
+  dplyr::filter(fdr <= 0.05, abs(TE) >= 0.2)
+tmp$Direction[tmp$TE <= 0] = 'DOWN'
+tmp$Direction[tmp$TE >= 0] = 'UP'
+tmp = tmp %>%
+  dplyr::group_by(Model, Sex, Direction) %>%
+  dplyr::summarise(count = length(unique(ensembl_gene_id))) %>%
+  tidyr::unite(Sex.Direction, Sex, Direction, sep = '.') %>%
+  tidyr::spread(Sex.Direction, count)
+kable(tmp)
+```
+PCA plots
+```{r pca}
+# Read adjusted expression
+expr.ids = c(ROSMAP = 'syn8456638', MSSM = 'syn8485017', MAYO = 'syn8466816')
+all.used.ids = c(all.used.ids, as.character(expr.ids))
+expr =  expr.ids %>%
+  lapply(downloadFile) %>%
+  plyr::join_all(type = 'inner') %>%
+  dplyr::filter(ensembl_gene_id %in% unique(dexp$ensembl_gene_id[dexp$adj.P.Val <= 0.05 & dexp$Model == 'Diagnosis']))
+expr[is.na(expr)] = 0
+
+pc = prcomp(expr[,-(1)], scale. = T, center = T)
+
+mtd = data.frame(SampleID = colnames(expr)[-(1)],
+                 PC1 = pc$rotation[,1],
+                 PC2 = pc$rotation[,2]) %>%
+  dplyr::inner_join(covar)
+p = ggplot(mtd, aes(x = PC1, y = PC2, color = Diagnosis, shape = Study))
+p = p + geom_point() + scale_shape_manual(values = 1:7)
+p = p + theme(legend.position = 'top') + ggtitle('Un-normalised')
+pl = list(); pl[[1]] = p
+
+# Read adjusted expression
+expr.ids = c(ROSMAP = 'syn8456719', MSSM = 'syn8485027', MAYO = 'syn8466826')
+all.used.ids = c(all.used.ids, as.character(expr.ids))
+expr =  expr.ids %>%
+  lapply(downloadFile) %>%
+  plyr::join_all(type = 'inner') %>%
+  dplyr::filter(ensembl_gene_id %in% unique(dexp$ensembl_gene_id[dexp$adj.P.Val <= 0.05 & dexp$Model == 'Diagnosis']))
+expr[is.na(expr)] = 0
+
+pc = prcomp(expr[,-(1)], scale. = T, center = T)
+
+mtd = data.frame(SampleID = colnames(expr)[-(1)],
+                 PC1 = pc$rotation[,1],
+                 PC2 = pc$rotation[,2]) %>%
+  dplyr::inner_join(covar)
+p = ggplot(mtd, aes(x = PC1, y = PC2, color = Diagnosis, shape = Study))
+p = p + geom_point() + scale_shape_manual(values = 1:7)
+p = p + theme(legend.position = 'top') + ggtitle('Normalised')
+pl[[2]] = p
+
+# Read adjusted expression + Dx
+expr.ids = c(ROSMAP = 'syn8456704', MSSM = 'syn8485026', MAYO = 'syn8466825')
+all.used.ids = c(all.used.ids, as.character(expr.ids))
+expr = expr.ids %>%
+  lapply(downloadFile) %>%
+  plyr::join_all(type = 'inner') %>%
+  dplyr::filter(ensembl_gene_id %in% unique(dexp$ensembl_gene_id[dexp$adj.P.Val <= 0.05 & dexp$Model == 'Diagnosis']))
+expr[is.na(expr)] = 0
+
+pc = prcomp(expr[,-(1)], scale. = T, center = T)
+
+mtd = data.frame(SampleID = colnames(expr)[-(1)],
+                 PC1 = pc$rotation[,1],
+                 PC2 = pc$rotation[,2]) %>%
+  dplyr::inner_join(covar)
+p = ggplot(mtd, aes(x = PC1, y = PC2, color = Tissue, shape = Diagnosis))
+p = p + geom_point() + scale_shape_manual(values = 1:7)
+p = p + theme(legend.position = 'top') + ggtitle('Normalised + Dx')
+pl[[3]] = p
+
+ggpubr::ggarrange(plotlist=pl, ncol = 3, nrow = 1)
+```
+
+Volcano plots
+```{r vp, fig.height=5, fig.width=10}
+p = ggplot(dexp %>%
+             dplyr::filter(Model == 'Diagnosis', Comparison == 'AD-CONTROL'), 
+           aes(x = logFC, y = -log10(adj.P.Val), color = Direction)) + geom_point(alpha = 0.1)
+p = p + facet_grid(.~Study+Tissue, scales = 'free') + theme(legend.position = 'top') 
+p = p + scale_color_manual(values = viridis::viridis(3))
+# dev.off()
+# svg(filename = 'VolcanoPlots.svg', height = 6, width = 12)
+# print(p)
+# dev.off()
+p
+```
+Average expression
+```{r aexp, fig.height=5, fig.width=10}
+col = viridis::viridis(3)
+p = ggplot(dexp%>%
+             dplyr::filter(Model == 'Diagnosis', Comparison == 'AD-CONTROL'), 
+           aes(x = AveExpr, y = logFC)) + geom_point(aes(color = Direction), alpha = 0.1)
+p = p + facet_grid(.~Study+Tissue, scales = 'free') + theme(legend.position = 'top') 
+p = p + scale_color_manual(values = col) + geom_smooth()
+p
+```
+Number of differentially expressed genes in each foldchange range (histogram)
+```{r ndiff.range, fig.height=5, fig.width=10}
+dexp$lfc1 = ifelse(dexp$logFC >= 0, dexp$logFC, NA)
+dexp$lfc2 = ifelse(dexp$logFC <= 0, dexp$logFC, NA)
+p = ggplot(dexp %>% dplyr::filter(adj.P.Val <= 0.05, Model == 'Diagnosis', Comparison == 'AD-CONTROL'))
+p = p + geom_histogram( aes(x = lfc1, y = ..count..), fill = "red")
+p = p + geom_histogram( aes(x = lfc2, y = -..count..), fill = "green")
+p = p + facet_grid(.~Study+Tissue, scales = 'free') + ylab('Gene count') + xlab('Log Fold Change')
+p
+```
+### Homogenity across brain regions
+overlap between different brain regions
+```{r ovlp.stats.up}
+background.genes = dexp$ensembl_gene_id
+dexp.enrich.plots = dexp %>%
+  dplyr::filter((Model == 'Diagnosis' & Sex == 'ALL') |
+                  (Model == 'Diagnosis.Sex' & Sex != 'ALL'),
+                Comparison == 'AD-CONTROL',
+                Direction != 'NONE') %>%
+  plyr::dlply(.(Sex, Direction), .fun = function(x, background.genes){
+    gr = x %>%
+      plyr::dlply(.(Tissue), .fun = function(x){unique(x$ensembl_gene_id)}) %>%
+      plyr::ldply(.,function(x, gs, backgroundGenes){
+        plyr::ldply(gs, .fun = function(y,x,backgroundGenes){
+          CovariateAnalysis::fisherEnrichment(x,y,backgroundGenes)
+        }, x, backgroundGenes) %>%
+          dplyr::rename(To = Tissue)
+      }, ., background.genes) %>%
+      dplyr::rename(From = Tissue) %>%
+      dplyr::mutate(FDR = p.adjust(pval, method = 'BH')) %>%
+      dplyr::select(From, To, Odds.Ratio, FDR, noverlap) %>%
+      igraph::graph_from_data_frame() 
+    
+    or.mat = igraph::as_adj(gr, type = 'both', attr = 'Odds.Ratio') %>% as.matrix()
+    or.mat[is.infinite(or.mat)] = max(or.mat[is.finite(or.mat)])*1.1
+    no.mat = igraph::as_adj(gr, type = 'both', attr = 'noverlap')
+    
+    if (unique(x$Direction) == 'UP'){
+      col = c('white','red')
+    } else {
+      col = c('white','darkgreen')
+    }
+    ComplexHeatmap::Heatmap(as.matrix(or.mat), 
+                            col= circlize::colorRamp2(c(0,max(or.mat)*0.8),col),
+                            cell_fun = function(j, i, x, y, widht, height, fill){
+                              no.mat[i,j] %>%
+                                format(digit = 1) %>%
+                                as.character() %>%
+                                grid.text(x, y)
+                            },
+                            name = 'Odds Ratio',
+                            row_title = paste(unique(x$Direction),'regulated'),
+                            column_title = unique(x$Sex)) %>%
+      return()
+  }, background.genes)
+gl = lapply(dexp.enrich.plots, function(x){draw(x); gr = grid::grid.grab()})
+ggarrange(plotlist = gl[c(1,3,5,2,4,6)], nrow = 2, ncol = 3)
+
+# Get tau values from meta differential expression
+meta.dexp = downloadFile('syn11914808') %>%
+  dplyr::mutate(Sex = 'ALL') %>%
+  list(downloadFile('syn11914809')) %>%
+  rbindlist(use.names = T, fill = T)
+
+p = ggplot(meta.dexp, aes(x= TE.fixed, y = TE.random, color= -log10(fdr.random))) 
+p = p + geom_point() + geom_smooth(method = 'lm', se = T) + facet_grid(.~Sex) + theme_bw() %+replace% theme(legend.position = 'top')
+p = p + scale_color_continuous(low = 'grey', high = 'black')
+pl = list();pl[[1]] = p
+
+p = ggplot(meta.dexp, aes(x = tau, fill = Sex)) + geom_density()
+pl[[2]] = p
+ggarrange(plotlist = pl, ncol = 1, nrow = 2)
+```
+### Similarity of signatures between male and females
+```{r ovlp.stats.male.female}
+background.genes = dexp$ensembl_gene_id
+dexp.enrich.plots = dexp %>%
+  dplyr::filter(Model == 'Diagnosis.Sex',
+                Sex %in% c('FEMALE','MALE'),
+                Comparison == 'AD-CONTROL',
+                Direction != 'NONE') %>%
+  plyr::ddply(.(Tissue, Direction), .fun = function(x, background.genes){
+    if (length(unique(x$Sex)) == 2){
+      gr = x %>%
+        plyr::dlply(.(Sex), .fun = function(x){unique(x$ensembl_gene_id)})
+      CovariateAnalysis::fisherEnrichment(gr[[1]],gr[[2]],backgroundGenes)
+    }
+  }, backgroundGenes) %>%
+  dplyr::mutate(fdr = p.adjust(pval, method = 'BH'))
+    
+p = ggplot(dexp.enrich.plots, aes(x = Tissue, y = -log10(fdr), size = Odds.Ratio, color = Direction)) + geom_point()
+p = p + geom_hline(yintercept = -log10(0.05))
+
+```
+
+
+### Store in synapse
+```{r syn.store, eval = FALSE, include = FALSE}
+# Get github commit
+thisRepo <- getRepo(repository = "th1vairam/ampad-DiffExp", ref="branch", refName='manuscriptPrep')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('manuscriptFigures/diffExp.Rmd'))
+
+obj = rmarkdown::render('diffExp.Rmd', output_format = 'html_document')
+obj = File(obj, name = 'Differential expression summary', parentId = 'syn11703045')
+obj = synStore(obj, executed = thisFile)
+wikiPg = WikiPage(owner = obj, title = 'Differential expression summary')
+wikiPg = synGetWiki(obj)
+wikiPg@properties$markdown = paste0("${preview?entityId=",obj$properties$id,"}")
+wikiPg = synStore(wikiPg)
+```

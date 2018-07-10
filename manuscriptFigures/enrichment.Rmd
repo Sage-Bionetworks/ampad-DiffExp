@@ -1,0 +1,126 @@
+---
+title: "Enrichment analysis figures"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_notebook
+---
+```{r libs}
+library(CovariateAnalysis)
+library(data.table)
+library(plyr)
+library(tidyverse)
+
+library(ComplexHeatmap)
+
+library(synapser)
+library(knitr)
+library(githubr)
+
+synLogin()
+```
+Get enrichment results
+```{r get.data}
+enrich = fread(synGet('syn11714360')$path, data.table = F) %>%
+  dplyr::filter((Model == 'Diagnosis' & Sex == 'ALL') | 
+                  (Model == 'Diagnosis.Sex' & Sex != 'ALL'),
+                Comparison == 'AD-CONTROL') %>%
+  dplyr::group_by(Model, Tissue, Comparison, Sex, Direction, Category) %>%
+  dplyr::mutate(FDR = p.adjust(pval, method = 'fdr'),
+                SetName = gsub('Zhang:','',SetName)) %>%
+  dplyr::ungroup()
+
+enrich.meta = fread(synGet('syn11973632')$path, data.table = F) %>%
+  tidyr::separate(MetaSetName, c('a','b','c','d','e'), sep = '\\.') %>% 
+  dplyr::filter(a == 'ad')
+
+enrich.meta$Sex = 'ALL'
+enrich.meta$Sex[enrich.meta$c == 'FEMALE'] = 'FEMALE'
+enrich.meta$Sex[enrich.meta$c == 'MALE'] = 'MALE'
+
+enrich.meta$Model = 'ALL'
+enrich.meta$Model[enrich.meta$c == 'fixed' | enrich.meta$d == 'fixed'] = 'FIXED'
+enrich.meta$Model[enrich.meta$c == 'random' | enrich.meta$d == 'random'] = 'RANDOM'
+
+enrich.meta$Direction = 'NONE'
+enrich.meta$Direction[enrich.meta$d == 'UP' | enrich.meta$e == 'UP'] = 'UP'
+enrich.meta$Direction[enrich.meta$d == 'DOWN' | enrich.meta$e == 'DOWN'] = 'DOWN'
+
+enrich.meta = enrich.meta %>%
+  dplyr::select(-a,-b,-c,-d,-e) %>%
+  dplyr::group_by(Model, Sex, Direction, Category) %>%
+  dplyr::mutate(FDR = p.adjust(pval, method = 'fdr'),
+                SetName = gsub('Zhang:','',SetName)) %>%
+  dplyr::ungroup()
+```
+Celltype graphs
+```{r cell.type, fig.width=8, fig.height=6}
+enrich.all = list(IndividualAnalysis = enrich %>%
+                    dplyr::select(-Comparison, -Model), 
+                  MetaAnalysis = enrich.meta %>%
+                    dplyr::rename(Tissue = Model)) %>%
+  data.table::rbindlist(use.names = T, fill = T, idcol = 'Model') %>%
+  dplyr::filter(Category == 'CellType', SetName != 'NewOligos') %>%
+  dplyr::mutate(SetName = factor(SetName, 
+                                 levels = c("Microglia", "Astrocyte", "Endothelial", 
+                                            "MyelinOligos", "OPC", "Neuron")),
+                Tissue = factor(Tissue, 
+                                levels = c('FIXED', 'RANDOM', 'PHG', 'TCX', 'STG', 
+                                           'IFG', 'DLPFC', 'CBE', 'FP')),
+                Model = factor(Model, levels = c('MetaAnalysis', 'IndividualAnalysis')))
+
+p = ggplot(enrich.all, aes(x = SetName, y = Tissue, color = -log10(FDR), size = Odds.Ratio)) + geom_point()
+p = p + facet_grid(Direction+.~Sex) + xlab('') 
+p = p + theme_bw() %+replace% theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), 
+                                    legend.position = 'top')
+p = p + scale_color_gradientn(colours = c('grey', 'grey', viridis::viridis(2)[2], 
+                                          viridis::viridis(2)[1], viridis::viridis(2)[1]),
+                              values = c(0, 0.01625, 0.02875, 0.07, 1))
+p
+```
+AD related genesets
+```{r ad.related, fig.width=8, fig.height=6}
+enrich.all = list(IndividualAnalysis = enrich %>%
+                    dplyr::select(-Comparison, -Model), 
+                  MetaAnalysis = enrich.meta %>%
+                    dplyr::rename(Tissue = Model)) %>%
+  data.table::rbindlist(use.names = T, fill = T, idcol = 'Model') %>%
+  dplyr::filter(Category == 'HypothesisDriven') %>%
+  dplyr::mutate(Tissue = factor(Tissue, 
+                                levels = c('FIXED', 'RANDOM', 'PHG', 'TCX',  
+                                           'DLPFC', 'CBE', 'FP', 'IFG', 'STG' )),
+                Model = factor(Model, levels = c('MetaAnalysis', 'IndividualAnalysis')),
+                SetName = factor(SetName, levels = c('dbgap', 'igap', 'genecards', 'jensenDisease',
+                                                     'kegg', 'omim', 'omimExpanded', 'pantherAmyloid',
+                                                     'pantherPresenilin', 'wikipathwaysHuman', 
+                                                     'wikipathwaysMouse')))
+
+p = ggplot(enrich.all, aes(x = SetName, y = Tissue, color = -log10(FDR), size = Odds.Ratio)) + geom_point()
+p = p + facet_grid(Direction+.~Sex) + xlab('') 
+p = p + theme_bw() %+replace% theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), 
+                                    legend.position = 'top')
+p = p + scale_color_gradientn(colours = c('grey', 'grey', viridis::viridis(2)[2], 
+                                          viridis::viridis(2)[1], viridis::viridis(2)[1]),
+                              values = c(0, 0.01625, 0.02875, 0.07, 1))
+p
+```
+
+Hypothesis free genesets
+```{r hf.related}
+enrich.all = list(IndividualAnalysis = enrich %>%
+                    dplyr::select(-Comparison, -Model), 
+                  MetaAnalysis = enrich.meta %>%
+                    dplyr::rename(Tissue = Model)) %>%
+  data.table::rbindlist(use.names = T, fill = T, idcol = 'Model') %>%
+  dplyr::filter(Category == 'HypothesisFree') %>%
+  dplyr::mutate(Tissue = factor(Tissue, 
+                                levels = c('FIXED', 'RANDOM', 'PHG', 'TCX',  
+                                           'DLPFC', 'CBE', 'FP', 'STG', 'IFG')),
+                Model = factor(Model, levels = c('MetaAnalysis', 'IndividualAnalysis'))) %>%
+  dplyr::select(-Genes)
+
+up.female = dplyr::filter(enrich.all, FDR <= 0.05, Sex == 'FEMALE', Direction == 'UP', Model == "MetaAnalysis", Tissue == 'RANDOM')
+up.male = dplyr::filter(enrich.all, FDR <= 0.05, Sex == 'MALE', Direction == 'UP', Model == "MetaAnalysis", Tissue == 'RANDOM')
+
+down.female = dplyr::filter(enrich.all, FDR <= 0.05, Sex == 'FEMALE', Direction == 'DOWN', Model == "MetaAnalysis", Tissue == 'RANDOM')
+down.male = dplyr::filter(enrich.all, FDR <= 0.05, Sex == 'MALE', Direction == 'DOWN', Model == "MetaAnalysis", Tissue == 'RANDOM')
+```

@@ -1,0 +1,217 @@
+---
+title: "Sample SWAP figures"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_notebook
+---
+```{r libs}
+library(CovariateAnalysis)
+library(data.table)
+library(plyr)
+library(tidyverse)
+
+library(edgeR)
+
+library(synapseClient)
+library(knitr)
+library(githubr)
+
+synapseLogin()
+
+```
+```{r ROSMAP}
+downloadFile <- function(id){ fread(synGet(id)@filePath, header = T, data.table = F)}
+
+picardGeneMetrics = synTableQuery("SELECT * FROM syn4597336")@values %>%
+  dplyr::select(-SAMPLE, -LIBRARY, -READ_GROUP)
+
+ROSMAP = c(mayo = 'syn4904891', mssm = 'syn4904889', broad = 'syn4904859') %>%
+  lapply(downloadFile)
+
+ROSMAP.picard = purrr::imap(ROSMAP, function(x, namex, picMetric){
+  picMetric = picMetric %>%
+    tidyr::separate(Sample, c('a','b','c'), sep ='\\.') %>%
+    dplyr::filter(a %in% colnames(x), SiteSequenced == namex) %>%
+    dplyr::rename(Sample = a) %>%
+    dplyr::group_by(Sample) %>%
+    dplyr::slice(1) %>%
+    dplyr::select(-b,-c) %>%
+    dplyr::mutate(SiteSamplesFrom = 'ROSMAP') %>%
+    dplyr::mutate(SampleID = paste(Sample, SiteSamplesFrom, SiteSequenced, sep = '_'))
+}, picardGeneMetrics) 
+
+ROSMAP = purrr::map2(ROSMAP, ROSMAP.picard, .f = function(x,y){
+  y = data.frame(y)
+  rownames(y) = y$Sample
+  colnames(x)[-(1)] = y[colnames(x)[-(1)], 'SampleID']
+  return(x)
+}) %>%
+  plyr::join_all(by = 'V1')
+
+ROSMAP.picard = ROSMAP.picard %>%
+  data.table::rbindlist(use.names = T, fill = T)
+
+pc = prcomp(cpm(ROSMAP[,-(1)]), scale. = T, center = T)
+pvar = (pc$sdev^2*100/sum(pc$sdev^2)) %>% 
+  round()
+PC = data.frame(SampleID = colnames(ROSMAP)[-(1)],
+                PC1 = pc$rotation[,1],
+                PC2 = pc$rotation[,2]) %>%
+  dplyr::left_join(ROSMAP.picard)
+
+p = ggplot(PC, aes(x = PC1, y = PC2, color = SiteSequenced)) + geom_point()
+p = p + ggtitle('ROSMAP Samples') + xlab(paste0('PC1(',pvar[1],'%)')) + ylab(paste0('PC2(',pvar[2],'%)'))
+p
+
+p = PC %>%
+  dplyr::select(SampleID, PCT_RIBOSOMAL_BASES, PCT_CODING_BASES, PCT_UTR_BASES,
+                PCT_INTRONIC_BASES, PCT_INTERGENIC_BASES, SiteSequenced) %>%
+  tidyr::gather(Feature, Value, -SampleID, -SiteSequenced) %>%
+  ggplot(aes(x = SiteSequenced, y = Value, fill = Feature)) + geom_bar(stat = 'identity') 
+p
+```
+
+```{r MSSM}
+MSSM = c(mayo = 'syn5583761', mssm = 'syn5583762') %>%
+  lapply(function(id){
+    read.table(synGet(id)@filePath, header = T, sep = '\t', row.names = 1) %>%
+      tibble::rownames_to_column(var = 'V1')
+  })
+
+MSSM.picard = purrr::imap(MSSM, function(x, namex, picMetric){
+  picMetric = picMetric %>%
+    tidyr::separate(Sample, c('a','b','c','d'), sep ='\\.') %>%
+    dplyr::filter(a %in% colnames(x), SiteSequenced == namex) %>%
+    dplyr::rename(Sample = a) %>%
+    dplyr::group_by(Sample) %>%
+    dplyr::slice(1) %>%
+    dplyr::select(-b,-c,-d) %>%
+    dplyr::mutate(SiteSamplesFrom = 'MSSM') %>%
+    dplyr::mutate(SampleID = paste(Sample, SiteSamplesFrom, SiteSequenced, sep = '_'))
+}, picardGeneMetrics) 
+
+MSSM = purrr::map2(MSSM, MSSM.picard, .f = function(x,y){
+  y = data.frame(y)
+  rownames(y) = y$Sample
+  colnames(x)[-(1)] = y[colnames(x)[-(1)], 'SampleID']
+  return(x)
+}) %>%
+  plyr::join_all(by = 'V1')
+
+MSSM.picard = MSSM.picard %>%
+  data.table::rbindlist(use.names = T, fill = T)
+
+pc = prcomp(cpm(MSSM[,-(1)]), scale. = T, center = T)
+pvar = (pc$sdev^2*100/sum(pc$sdev^2)) %>% 
+  round()
+PC = data.frame(SampleID = colnames(MSSM)[-(1)],
+                PC1 = pc$rotation[,1],
+                PC2 = pc$rotation[,2]) %>%
+  dplyr::left_join(MSSM.picard)
+
+p = ggplot(PC, aes(x = PC1, y = PC2, color = SiteSequenced)) + geom_point()
+p = p + ggtitle('MSSM Samples') + xlab(paste0('PC1(',pvar[1],'%)')) + ylab(paste0('PC2(',pvar[2],'%)'))
+p
+
+p = PC %>%
+  dplyr::select(SampleID, PCT_RIBOSOMAL_BASES, PCT_CODING_BASES, PCT_UTR_BASES,
+                PCT_INTRONIC_BASES, PCT_INTERGENIC_BASES, SiteSequenced) %>%
+  tidyr::gather(Feature, Value, -SampleID, -SiteSequenced) %>%
+  ggplot(aes(x = SiteSequenced, y = Value, fill = Feature)) + geom_bar(stat = 'identity') 
+p
+```
+
+```{r MAYO}
+MAYO = c(mayo = 'syn5553124', mssm = 'syn5553119') %>%
+  lapply(function(id){
+    read.table(synGet(id)@filePath, header = T, sep = '\t', row.names = 1, check.names = F) %>%
+      tibble::rownames_to_column(var = 'V1')
+  })
+
+MAYO.picard = purrr::imap(MAYO, function(x, namex, picMetric){
+  picMetric = picMetric %>%
+    tidyr::separate(Sample, c('a','b'), sep ='\\.') %>%
+    dplyr::filter(a %in% colnames(x), SiteSequenced == namex) %>%
+    dplyr::rename(Sample = a) %>%
+    dplyr::group_by(Sample) %>%
+    dplyr::slice(1) %>%
+    dplyr::select(-b) %>%
+    dplyr::mutate(SiteSamplesFrom = 'MAYO') %>%
+    dplyr::mutate(SampleID = paste(Sample, SiteSamplesFrom, SiteSequenced, sep = '_'))
+}, picardGeneMetrics) 
+
+MAYO = purrr::map2(MAYO, MAYO.picard, .f = function(x,y){
+  y = data.frame(y)
+  rownames(y) = y$Sample
+  colnames(x)[-(1)] = y[colnames(x)[-(1)], 'SampleID']
+  return(x)
+}) %>%
+  plyr::join_all(by = 'V1')
+
+MAYO.picard = MAYO.picard %>%
+  data.table::rbindlist(use.names = T, fill = T)
+
+pc = prcomp(cpm(MAYO[,-(1)]), scale. = T, center = T)
+pvar = (pc$sdev^2*100/sum(pc$sdev^2)) %>% 
+  round()
+PC = data.frame(SampleID = colnames(MAYO)[-(1)],
+                PC1 = pc$rotation[,1],
+                PC2 = pc$rotation[,2]) %>%
+  dplyr::left_join(MAYO.picard)
+
+p = ggplot(PC, aes(x = PC1, y = PC2, color = SiteSequenced)) + geom_point()
+p = p + ggtitle('MAYO Samples') + xlab(paste0('PC1(',pvar[1],'%)')) + ylab(paste0('PC2(',pvar[2],'%)'))
+p
+
+p = PC %>%
+  dplyr::select(SampleID, PCT_RIBOSOMAL_BASES, PCT_CODING_BASES, PCT_UTR_BASES,
+                PCT_INTRONIC_BASES, PCT_INTERGENIC_BASES, SiteSequenced) %>%
+  tidyr::gather(Feature, Value, -SampleID, -SiteSequenced) %>%
+  ggplot(aes(x = SiteSequenced, y = Value, fill = Feature)) + geom_bar(stat = 'identity') 
+p
+```
+
+```{r ALL}
+COUNTS = list(ROSMAP = ROSMAP, MSSM = MSSM, MAYO = MAYO) %>%
+  lapply(function(x){
+    x = x %>%
+      tidyr::separate(V1, c('a', 'b'), sep = '\\.') %>%
+      dplyr::select(-b)
+    return(x)
+  }) %>%
+  plyr::join_all()
+COUNTS[is.na(COUNTS)] = 0
+
+METADATA = list(ROSMAP = ROSMAP.picard, MSSM = MSSM.picard, MAYO = MAYO.picard) %>%
+  data.table::rbindlist(use.names = T, fill = T)
+
+pc = cpm(COUNTS[,-(1)], normalized.lib.sizes = TRUE, log = TRUE) %>%
+  prcomp(scale. = T, center = T)
+pvar = (pc$sdev^2*100/sum(pc$sdev^2)) %>% 
+  round()
+PC = data.frame(SampleID = colnames(COUNTS)[-(1)],
+                PC1 = pc$rotation[,1],
+                PC2 = pc$rotation[,2],
+                PC3 = pc$rotation[,3]) %>%
+  dplyr::left_join(METADATA)
+
+p = ggplot(PC, aes(x = PC1, y = PC2, color = SiteSequenced, shape = SiteSamplesFrom)) + geom_point()
+p = p + xlab(paste0('PC1(',pvar[1],'%)')) + ylab(paste0('PC2(',pvar[2],'%)'))
+pl = list(); pl[[1]] = p
+
+p = ggplot(PC, aes(x = PC2, y = PC3, color = SiteSequenced, shape = SiteSamplesFrom)) + geom_point()
+p = p + xlab(paste0('PC2(',pvar[2],'%)')) + ylab(paste0('PC3(',pvar[3],'%)'))
+pl[[2]] = p
+
+p = PC %>%
+  dplyr::select(SampleID, PCT_RIBOSOMAL_BASES, PCT_CODING_BASES, PCT_UTR_BASES,
+                PCT_INTRONIC_BASES, PCT_INTERGENIC_BASES, SiteSequenced, SiteSamplesFrom) %>%
+  tidyr::gather(Feature, Value, -SampleID, -SiteSequenced, -SiteSamplesFrom) %>%
+  ggplot(aes(x = SiteSequenced, y = Value, fill = Feature)) + geom_bar(stat = 'identity') 
+p = p + facet_grid(.~SiteSamplesFrom)
+pl[[3]] = p
+
+p1 = ggpubr::ggarrange(plotlist = pl[1:2], nrow = 1, ncol = 2)
+p2 = ggpubr::ggarrange(p1, pl[[3]], nrow = 2, ncol = 1)
+p2
+```
