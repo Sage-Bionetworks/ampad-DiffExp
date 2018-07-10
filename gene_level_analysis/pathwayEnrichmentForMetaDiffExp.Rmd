@@ -12,9 +12,9 @@ library(knit2synapse) # get the package from devtools::install_github('Sage-Bion
 
 synapseClient::synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "pathwayEnrichmentForDiffExp.Rmd",
+knit2synapse::knitToFolderEntity(file = "pathwayEnrichmentForMetaDiffExp.Rmd",
                                  parentId = "syn8672415",
-                                 entityName = 'Enrichment analysis of all differentialy expressed genes')
+                                 entityName = 'Enrichment analysis of all (meta) differentialy expressed genes')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -51,11 +51,11 @@ knitr::opts_chunk$set(
 ```
 
 ```{r synapse.parameters, include=FALSE, cache=FALSE}
-parentId = 'syn8672415';
+parentId = 'syn11914606';
 activityName = 'Enrichment Analysis';
 activityDescription = 'Enrichment analysis of reprocessed rnaseq from all 7 brain regions';
 
-thisFileName <- 'pathwayEnrichmentForDiffExp.Rmd'
+thisFileName <- 'pathwayEnrichmentForMetaDiffExp.Rmd'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/ampad-DiffExp", ref="branch", refName='geneLevelAnalysis')
@@ -63,12 +63,34 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('gene_level
 ```
 
 ## Data download
-### Get summary differential expression results from synapse
+### Get meta-differential expression genesets
 ```{r get.diffExp}
-dexp = fread(synapseClient::synGet('syn11180450')@filePath, data.table = FALSE)
-all.used.ids = c('syn11180450')
+# Load meta-differential expression genesets
+load(synGet('syn11914811')@filePath)
+all.used.ids = c('syn11914811', 'syn11914808')
+bck.genes = fread(synGet('syn11914808')@filePath, data.table = T) %>%
+  dplyr::select(ensembl_gene_id)
+  
+## Define biomart object
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", 
+                host = "dec2016.archive.ensembl.org", 
+                dataset = "hsapiens_gene_ensembl")
 
-bck.genes = unique(dexp$hgnc_symbol)
+## Query biomart
+Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
+                       filters = "ensembl_gene_id", 
+                       values = bck.genes$ensembl_gene_id,
+                       mart = mart)
+
+bck.genes = unique(Ensemble2HGNC$hgnc_symbol)
+
+# Convert gene sets to ensemble gene id
+all.gs = lapply(all.gs, function(x){
+  Ensemble2HGNC %>%
+    dplyr::filter(ensembl_gene_id %in% x) %>%
+    dplyr::select(hgnc_symbol) %>%
+    unique() %>% unlist() %>% as.character()
+})
 ```
 
 ### Get all gene sets
@@ -120,28 +142,25 @@ gs = purrr::map(gs, function(geneSet, bckGenes){
 
 ### Perform enrichment analysis
 ```{r enrich.de}
-enrich.results = dexp %>%
-  dplyr::filter(Direction != 'NONE') %>%
-  plyr::ddply(.(Model, Tissue, Comparison, Sex, Direction), .fun = function(x, gs, bckGenes){
-    gsToTest = setdiff(unique(x$hgnc_symbol),'')
+enrich.results = all.gs %>%
+  plyr::ldply(.fun = function(x, gs, bckGenes){
+    gsToTest = setdiff(x,'')
     if (length(gsToTest) >= 10){
       enrich = plyr::ldply(gs, .fun = function(y, gsToTest, bckGenes){
         plyr::ldply(y, .fun = function(gsToTest1, gsToTest, bckGenes){
           CovariateAnalysis::fisherEnrichment(gsToTest1, gsToTest, bckGenes)
         }, gsToTest, bckGenes, .id = 'SetName')
       }, gsToTest, bckGenes, .id = 'Category')
-      fwrite(enrich, 
-             paste(unique(c(x$Model, x$Tissue, x$Comparison, x$Sex, x$Direction)), collapse = '.') %>%
-               paste0('.tsv'))
     } else {
       enrich = data.frame()
     }
     return(enrich)
   }, 
-  gs, bck.genes, .parallel = T, .paropts = list(.packages = c('CovariateAnalysis', 'plyr', 'dplyr','data.table')))
+  gs, bck.genes, .parallel = T, .paropts = list(.packages = c('CovariateAnalysis', 'plyr', 'dplyr','data.table')),
+  .id = 'MetaSetName')
 
 fwrite(enrich.results, file = 'enrichmentResults.tsv', sep = '\t')
-obj = File('enrichmentResults.tsv', name = 'Enrichment Results (for all differential expression)', parentId = parentId)
+obj = File('enrichmentResults.tsv', name = 'Enrichment Results (for meta differential expression)', parentId = parentId)
 obj = synapseClient::synStore(obj, executed = thisFile, used = all.used.ids, 
                               activityName = activityName, activityDescription = activityDescription)
 ```

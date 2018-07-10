@@ -8,10 +8,10 @@ editor_options:
 ---
 
 ```{r knit2synapse, eval=FALSE}
-library(synapser)
+library(synapseClient)
 library(knit2synapse) # get the package from devtools::install_github('Sage-Bionetworks/knit2synapse')
 
-synLogin()
+synapseClient::synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "metaAnalysisForDiffExp.Rmd",
                                  parentId = "syn8672415",
@@ -27,11 +27,11 @@ library(data.table)
 library(plyr)
 library(tidyverse)
 
-library(synapser)
+library(synapseClient)
 library(knitr)
 library(githubr)
 
-synLogin()
+synapseClient::synapseLogin()
 
 library(doParallel)
 library(foreach)
@@ -68,7 +68,7 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('gene_level
 ```{r get.exp}
 # Function to read tsv/csv files from synapse
 downloadFile <- function(id){ 
-  fread(synGet(id)$path, data.table = F)
+  fread(synapseClient::synGet(id)@filePath, data.table = F)
 }
 
 # Read covariates
@@ -91,8 +91,7 @@ covar$ROSMAP = covar$ROSMAP %>%
   dplyr::mutate(Tissue = 'DLPFC')
 
 covar$MSSM = covar$MSSM %>%
-  dplyr::select(SampleID, SEX, Tissue.Diagnosis, Tissue.APOE4) %>%
-  dplyr::rename(Sex = SEX) %>%
+  dplyr::select(SampleID, Sex, Tissue.Diagnosis, Tissue.APOE4) %>%
   tidyr::separate(Tissue.Diagnosis, c('Tissue1', 'Diagnosis'), sep = '\\.') %>%
   tidyr::separate(Tissue.APOE4, c('Tissue', 'APOE4'), sep = '\\.')
 
@@ -282,14 +281,14 @@ all.gs = c(all.gs, gs)
 ```{r syn.store, cache = FALSE, include=FALSE}
 # Create folder to store results in synapse
 CODE = Folder(name = 'Meta Analysis', parentId = parentId)
-CODE = synStore(CODE)
+CODE = synapseClient::synStore(CODE)
 
 # Write results to files
 fwrite(meta.anlz.ad_cntrl, file = 'meta.anlz.ad_cntrl.tsv', sep = '\t', row.names = F, quote = F)
 obj = File('meta.anlz.ad_cntrl.tsv', 
            name = 'AD-Control meta-analysis across 7 brain regions', 
            parentId = CODE$properties$id)
-obj = synStore(obj, activityName = activityName, activityDescription = activityDescription,
+obj = synapseClient::synStore(obj, activityName = activityName, activityDescription = activityDescription,
                used = all.used.ids, executed = thisFile)
 
 # Write results to files
@@ -297,7 +296,7 @@ fwrite(meta.anlz.ad_cntrl.sex, file = 'meta.anlz.ad_cntrl.sex.tsv', sep = '\t', 
 obj = File('meta.anlz.ad_cntrl.sex.tsv', 
            name = 'AD-Control meta-analysis across 7 brain regions (sex specific)', 
            parentId = CODE$properties$id)
-obj = synStore(obj, activityName = activityName, activityDescription = activityDescription,
+obj = synapseClient::synStore(obj, activityName = activityName, activityDescription = activityDescription,
                used = all.used.ids, executed = thisFile)
 
 # Write results to files
@@ -305,7 +304,7 @@ fwrite(meta.anlz.apoe4_2_0, file = 'meta.anlz.apoe4_2_0.sex.tsv', sep = '\t', ro
 obj = File('meta.anlz.apoe4_2_0.sex.tsv', 
            name = 'AD-Control meta-analysis across 7 brain regions (APOE4)', 
            parentId = CODE$properties$id)
-obj = synStore(obj, activityName = activityName, activityDescription = activityDescription,
+obj = synapseClient::synStore(obj, activityName = activityName, activityDescription = activityDescription,
                used = all.used.ids, executed = thisFile)
 
 # Write results to files
@@ -313,7 +312,7 @@ save(list = c('all.gs'), file = 'all.gensets.RData')
 obj = File('all.gensets.RData', 
            name = 'All gene sets (in RData format)', 
            parentId = CODE$properties$id)
-obj = synStore(obj, activityName = activityName, activityDescription = activityDescription,
+obj = synapseClient::synStore(obj, activityName = activityName, activityDescription = activityDescription,
                used = all.used.ids, executed = thisFile)
 ```
 

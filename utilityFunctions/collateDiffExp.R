@@ -21,36 +21,16 @@ diff.exp = lapply(c(MAYO = 'syn8468023',
 
 ############################################
 ## Combine all differential expression results
-#### Fix format issues with MSSM data
-diff.exp$MSSM = diff.exp$MSSM %>%
-  plyr::ddply(.(Model), .fun = function(x){
-    if (any(x$Model %in% c('Diagnosis.SEX', 'Diagnosis.AOD'))){
-      x %>%
-        dplyr::select(-Tissue) %>%
-        tidyr::separate(Comparison, c('c1','c2'), sep = '\\-') %>%
-        tidyr::separate(c1, c('Tissue', 'c11','SEX'), sep = '\\.') %>%
-        tidyr::separate(c2, c('Tissue1', 'c21','SEX1'), sep = '\\.') %>%
-        tidyr::unite(Comparison, c11, c21, sep = '-')
-    } else {
-     return(x) 
-    }
-  })
-diff.exp$MSSM$SEX[diff.exp$MSSM$SEX == 'AOD'] = 'ALL'
-diff.exp$MSSM$SEX[is.na(diff.exp$MSSM$SEX)] = 'ALL'
-
 #### Organise model names
 diff.exp$MSSM$Model = factor(diff.exp$MSSM$Model)
-levels(diff.exp$MSSM$Model) = c("APOE4", "CDR", "Diagnosis", "Diagnosis.AOD", "Diagnosis.Sex")
 
 diff.exp$MAYO$Model = factor(diff.exp$MAYO$Model)
-levels(diff.exp$MAYO$Model) = c("APOE4", "Diagnosis", "Diagnosis.AOD", "Diagnosis.Sex", "SourceDiagnosis")
 
 diff.exp$ROSMAP$Model = factor(diff.exp$ROSMAP$Model)
-levels(diff.exp$ROSMAP$Model) = c("APOE4", "cogdx", "Diagnosis", "Diagnosis.AOD", "Diagnosis.Sex")
+levels(diff.exp$ROSMAP$Model) = c("APOE4", "SourceDiagnosis", "Diagnosis", "Diagnosis.AOD", "Diagnosis.Sex")
 
 #### Organise tissue names
 diff.exp$MSSM$Tissue = factor(diff.exp$MSSM$Tissue)
-levels(diff.exp$MSSM$Tissue) = c("FP", "FP", "IFG", "IFG", "PHG", "PHG", "STG", "STG")
 
 setnames(diff.exp$MAYO, 'Tissue.ref', 'Tissue')
 diff.exp$MAYO$Tissue.ag = NULL
@@ -69,10 +49,10 @@ levels(diff.exp$ROSMAP$Comparison) = c("AD-CONTROL", "AD-CONTROL", "AD-CONTROL.I
                                        "AOD", "AD-CONTROL", "1-0", "2-0", "2-1", "2-1", "4-1", "4-2", 
                                        "FEMALE-MALE")
 
-setnames(diff.exp$MSSM, 'SEX','Sex')
+diff.exp$MSSM$Sex[diff.exp$MSSM$Model == 'Diagnosis.AOD'] = 'ALL'
 
 diff.exp$MSSM$Comparison = factor(diff.exp$MSSM$Comparison)
-levels(diff.exp$MSSM$Comparison) = c("0-1", "0-2", "1-2", "AD-CONTROL", "AD-OTHER", "ALL-ALL", "ALL-NA", "CDR", "OTHER-CONTROL")     
+levels(diff.exp$MSSM$Comparison) = c("1-0", "2-0", "2-1", "AD-CONTROL", "AD-OTHER", "CDR", "OTHER-CONTROL")     
 
 setnames(diff.exp$MAYO, 'Sex.ag', 'Sex')
 diff.exp$MAYO$Sex[is.na(diff.exp$MAYO$Sex)] = 'ALL'
@@ -97,7 +77,7 @@ diff.exp$Direction[diff.exp$adj.P.Val <= 0.05 & diff.exp$logFC <= -log2(1.2)] = 
 # Get gene sets
 amp.ad.de.geneSets = diff.exp %>%
   dplyr::filter(Direction != 'NONE') %>%
-  plyr::dlply(.(Model, Tissue,Comparison, Sex, Direction), .fun = function(x){
+  plyr::dlply(.(Model, Tissue, Comparison, Sex, Direction), .fun = function(x){
     unique(x$ensembl_gene_id)
   })
   
