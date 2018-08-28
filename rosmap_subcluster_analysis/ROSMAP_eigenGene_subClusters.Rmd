@@ -1,0 +1,306 @@
+---
+title: "Subclustering analysis on ROSMAP samples based on network eigen genes"
+author: Thanneer Malai Perumal
+date: Tue Jul 10 19:26:50 2018
+output: html_notebook
+---
+### Load Libraries
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file is
+
+## Load required libraries
+library(data.table)
+library(tidyverse)
+
+library(edgeR)
+library(biomaRt)
+library(RColorBrewer)
+library(cqn)
+library(CovariateAnalysis)
+
+library(synapser)
+library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
+library(knitr)
+
+synLogin()
+
+library(future)
+library(furrr)
+
+plan(multiprocess)
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE}
+# Synapse parameters
+parentId = '';
+activityName = '';
+activityDescription = '';
+
+# Github link
+thisFileName <- 'ROSMAP_eigenGene_subClusters.Rmd'
+thisRepo <- getRepo(repository = "th1vairam/ampad-DiffExp", ref="branch", refName='rosmap_subcluster_analysis')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('rosmap_subcluster_analysis/',thisFileName))
+```
+
+### Data download
+Obtain count matrix and metadata from synapse
+```{r download.data}
+# Download expression data
+count = read.table(synGet('syn8691134')$path, header=T, sep='\t', check.names = F, row.names = 1)
+all.used.ids = c('syn8691134')
+count[,grep('150_120419', colnames(count))[2]] = NULL
+
+# Convert rownames of counts from tracking id to ensemble gene id
+tmp = data.frame(Gene.ID = rownames(count)) %>%
+  dplyr::mutate(ID = Gene.ID) %>%
+  tidyr::separate(ID, c('ensembl_gene_id', 'position'), sep = '\\.')
+rownames(tmp) = tmp$Gene.ID
+rownames(count) = tmp[rownames(count), 'ensembl_gene_id']
+
+# Get clinical metadata
+metadata.clinical = read.table(synGet('syn3191087')$path, sep=',',header=T)
+all.used.ids = c(all.used.ids, 'syn3191087')
+
+# Get clinical metadata with uncensored ages
+metadata.clinical.uncensored = read.table(synGet('syn7116000')$path, sep=',', header=T)
+all.used.ids = c(all.used.ids, 'syn7116000')
+
+# Get technical covariates
+metadata.tech <- read.table(synGet('syn4300313')$path, sep='\t', header=T)
+all.used.ids = c(all.used.ids, 'syn4300313')
+
+# Get picard metrics from synapse
+metadata.picard = synGet('syn8698240')$path %>%
+  data.table::fread() %>%
+  dplyr::rename(Sampleid = sample)
+# colnames(metadata.picard) = gsub('AlignmentSummaryMetrics__','',colnames(metadata.picard))
+# colnames(metadata.picard) = gsub('RnaSeqMetrics__','',colnames(metadata.picard))
+
+# Fix error in technical covariates data
+key = synGet('syn3382527')$path %>%
+  read.csv %>% 
+  dplyr::filter(!is.na(rnaseq_id)) %>%
+  dplyr::select(projid, rnaseq_id) %>%
+  tidyr::separate(rnaseq_id, c('a','b','batch'), sep = '_') %>% 
+  unite(Sampleid, a, b) %>%
+  dplyr::select(-batch) %>%
+  distinct()
+
+# Match technical and clinical covariates
+metadata = metadata.tech %>%
+  dplyr::left_join(metadata.picard) %>%
+  dplyr::select(-projid) %>%
+  dplyr::left_join(key) %>%
+  dplyr::left_join(metadata.clinical) %>%
+  dplyr::select(-age_first_ad_dx, -age_death, -age_at_visit_max) %>%
+  dplyr::left_join(metadata.clinical.uncensored)
+
+# Pick higher quality RIN batch for sample 492_120515
+metadata = metadata %>%
+  dplyr::group_by(Sampleid) %>%
+  dplyr::top_n(1, RINcontinuous)
+
+# Get gene specific parameters from synapse
+gene.param = synGet('syn8449369')$path %>%
+  data.table::fread(data.table = FALSE)
+all.used.ids = c(all.used.ids, 'syn8449369')
+
+gene.len = dplyr::select(gene.param, ensembl_gene_id, gene.length) %>% 
+  unique() %>%
+  as.data.frame()
+rownames(gene.len) = gene.len$ensembl_gene_id
+
+gene.gc = dplyr::select(gene.param, ensembl_gene_id, percentage_gc_content) %>% 
+  unique() %>%
+  as.data.frame()
+rownames(gene.gc) = gene.gc$ensembl_gene_id 
+```
+
+### Data preprocessing
+```{r preprocess.data, cache=TRUE}
+# Remove samples with no cogdx, RIN, PMI scores and age_death
+metadata = metadata %>%
+  ungroup() %>%
+  dplyr::filter(Sampleid %in% colnames(count)) %>%
+  dplyr::filter(!is.na(cogdx), !is.na(braaksc), !is.na(ceradsc)) %>%
+  dplyr::filter(!is.na(RINcontinuous)) %>%
+  dplyr::filter(!is.na(pmi)) %>%
+  dplyr::filter(!is.na(RnaSeqMetrics__PCT_INTRONIC_BASES)) %>%
+  dplyr::filter(!is.na(age_death)) %>%
+  as.data.frame()
+
+# Add harmonised case-control status
+metadata$Diagnosis = 'OTHER'
+metadata$Diagnosis[metadata$cogdx == 1 & metadata$braaksc <= 3 & metadata$ceradsc >= 3] = 'CONTROL'
+metadata$Diagnosis[metadata$cogdx == 4 & metadata$braaksc >= 4 & metadata$ceradsc <= 2] = 'AD'
+
+# Add sex variable 
+metadata$Sex = 'FEMALE'
+metadata$Sex[metadata$msex == 1] = 'MALE'
+
+# Add apoe4 genotype (0, 1, 2)
+metadata$APOE4 = 0
+metadata$APOE4[metadata$apoe_genotype %in% c(24, 34)] = 1
+metadata$APOE4[metadata$apoe_genotype %in% c(44)] = 2
+# metadata$APOE4[is.na(metadata$apoe_genotype)] = NA
+
+# Get square of RIN
+metadata$RINcontinuous2 = metadata$RINcontinuous^2
+
+# Match covariates to expression data
+indToRetain = intersect(metadata$Sampleid, colnames(count))
+removedIDs = setdiff(colnames(count), metadata$Sampleid)
+
+count = count[,indToRetain]
+
+rownames(metadata) = metadata$Sampleid
+metadata = metadata[indToRetain,]
+```
+Dorsolateral prefrontal cortex of `r dim(count)[2]` subjects from the ROS and MAP cohorts are used for the analysis. Following sample are removed due to missing metadata `r paste(removedIDs, collapse = ',')`
+
+#### Filter genes
+* Remove genes that have less than 1 cpm counts in at least 50% of samples per Diagnosis
+* Remove genes with missing gene length and percentage GC content
+```{r filter.genes}
+genesToAnalyze = metadata %>%
+  group_by(Diagnosis) %>%
+  nest() %>%
+  deframe() %>%
+  purrr::map(.f = function(mtd, count){
+    processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$Sampleid],
+                                                     MIN_GENE_CPM=1, 
+                                                     MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
+    processed.counts$filteredExprMatrix$genes
+  }, count) %>%
+  bind_rows()
+
+genesToAnalyze = genesToAnalyze$genes %>% 
+  unique() %>%
+  intersect(gene.gc$ensembl_gene_id[!is.na(gene.gc$percentage_gc_content)]) %>%
+  intersect(gene.len$ensembl_gene_id[!is.na(gene.len$gene.length)]) %>%
+  setdiff(c("N_unmapped", "N_multimapping", "N_noFeature", "N_ambiguous"))
+
+processed.counts = getGeneFilteredGeneExprMatrix(count[genesToAnalyze, ], 
+                                                 MIN_GENE_CPM=0, 
+                                                 MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0)
+```
+Processing `r dim(processed.counts$filteredExprMatrix)[1]` genes in `r dim(processed.counts$filteredExprMatrix)[2]` samples
+
+### Library Normalisation
+Library normalisation is performed using cqn (conditional quantile normalisation)
+```{r cqn}
+# Compute offset for gene length and gc content
+cqn.gene.expression = cqn(processed.counts$filteredExprMatrix$counts, 
+                          x = gene.gc[processed.counts$filteredExprMatrix$genes$genes, 'percentage_gc_content'],
+                          lengths = gene.len[processed.counts$filteredExprMatrix$genes$genes, 'gene.length'],
+                          lengthMethod = "smooth", 
+                          verbose = FALSE)
+cqn.gene.expression$E = cqn.gene.expression$y + cqn.gene.expression$offset
+indToRemove = c('380_120503', '500_120515')
+```
+### Get network module genes from synapse
+```{r net.genes}
+net.modules = synTableQuery('select * from syn11932957')$asDataFrame() %>%
+  dplyr::filter(brainRegion == 'DLPFC') %>%
+  dplyr::mutate(Module = fct_recode(Module,
+                                    Microglia = 'DLPFCblue',
+                                    NoCellType = 'DLPFCturquoise',
+                                    oligodendrocyte = 'DLPFCbrown',
+                                    neuron = 'DLPFCyellow'))
+all.used.ids = c(all.used.ids, 'syn11932957')
+```
+Cell type to module mapping 
+* DLPFCblue -> Microglia
+* DLPFCturquoise -> No cell type specific
+* DLPFCbrown -> oligodendrocyte
+* DLPFCyellow -> neuron
+
+### Analysis I: Neuro vs microglia analysis
+#### Finindg sub clusters
+Here we perform prinicpal component analysis of module genes to identify module eigen gene (PC1). Based on the module eigen gene we extract up (median + 1 std dev) and down (median - 1 std deviation) samples for each cell type clusters
+
+```{r anlz.1, results='asis'}
+pc.mod = net.modules %>%
+  group_by(Module) %>%
+  nest() %>%
+  deframe() %>%
+  purrr::map(.f = function(x){
+    ind = intersect(x$GeneID, rownames(cqn.gene.expression$E))
+    
+    pc = prcomp(cqn.gene.expression$E[ind,])
+    data.frame(PC1 = pc$rotation[,1], PC2 = pc$rotation[,2]) %>%
+      tibble::rownames_to_column('Sampleid')
+  }) %>%
+  bind_rows(.id = 'Module')
+
+anlz1.patterns = pc.mod %>%
+  group_by(Module) %>%
+  dplyr::mutate(md = median(PC1, na.rm = T),
+                sd = sd(PC1, na.rm = T)) 
+anlz1.patterns$direction = 'NONE'
+anlz1.patterns$direction[anlz1.patterns$PC1 >= anlz1.patterns$md+1*anlz1.patterns$sd] = 'UP'
+anlz1.patterns$direction[anlz1.patterns$PC1 <= anlz1.patterns$md-1*anlz1.patterns$sd] = 'DOWN'
+anlz1.patterns = anlz1.patterns %>%
+  dplyr::filter(direction != 'NONE') %>%
+  tidyr::unite(Module.direction, Module, direction, sep = '.') %>% 
+  dplyr::group_by(Module.direction) %>%
+  nest() %>%
+  deframe() %>%
+  purrr::map(.f = function(x){
+    x$Sampleid
+  }) 
+
+writeLines('Number of samples in each cluster is')
+anlz1.patterns %>%
+  map_df(length) %>%
+  kable()
+```
+### Print summary statistics for each modules
+NOTE: Up here means driving the cluster in positive direction
+
+Pattern 1: Neuron and Microglai UP
+```{r summary.stats.pt1}
+ind = intersect(anlz1.patterns$neuron.UP, anlz1.patterns$Microglia.UP)
+metadata %>%
+  dplyr::filter(Sampleid %in% ind) %>%
+  dplyr::select(braaksc, ceradsc, cogdx, Diagnosis, Sex, APOE4) %>%
+  dplyr::mutate_all(as.factor) %>%
+  summary()
+```
+Pattern 2: Neuron and Microglai DOWN
+```{r summary.stats.pt2}
+ind = intersect(anlz1.patterns$neuron.DOWN, anlz1.patterns$Microglia.DOWN)
+metadata %>%
+  dplyr::filter(Sampleid %in% ind) %>%
+  dplyr::select(braaksc, ceradsc, cogdx, Diagnosis, Sex, APOE4) %>%
+  dplyr::mutate_all(as.factor) %>%
+  summary()
+```
+Pattern 3: Neuron UP and Microglai DOWN
+```{r summary.stats.pt3}
+ind = intersect(anlz1.patterns$neuron.UP, anlz1.patterns$Microglia.DOWN)
+metadata %>%
+  dplyr::filter(Sampleid %in% ind) %>%
+  dplyr::select(braaksc, ceradsc, cogdx, Diagnosis, Sex, APOE4) %>%
+  dplyr::mutate_all(as.factor) %>%
+  summary()
+```
+Pattern 4: Neuron DOWN and Microglai UP
+```{r summary.stats.pt4}
+ind = intersect(anlz1.patterns$neuron.DOWN, anlz1.patterns$Microglia.UP)
+metadata %>%
+  dplyr::filter(Sampleid %in% ind) %>%
+  dplyr::select(braaksc, ceradsc, cogdx, Diagnosis, Sex, APOE4) %>%
+  dplyr::mutate_all(as.factor) %>%
+  summary()
+```
