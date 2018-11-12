@@ -1,0 +1,125 @@
+---
+title: "Enrichment analysis for Proteostasis GeneSets"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r knit2synapse, eval=FALSE}
+library(synapser)
+library(knit2synapse) # get the package from devtools::install_github('Sage-Bionetworks/knit2synapse')
+
+synLogin()
+
+knit2synapse::createAndKnitToFolderEntity(file = "pathwayEnrichmentForProtGeneSet.Rmd",
+                                          parentId = "syn8672415",
+                                          folderName = 'Enrichment analysis of all differentialy expressed genes for Proteostasis/Lysosome')
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(data.table)
+library(plyr)
+library(tidyverse)
+library(biomaRt)
+
+library(synapser)
+library(knitr)
+library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
+
+synLogin()
+
+library(future)
+library(furrr)
+
+plan(multiprocess)
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE, cache=FALSE}
+parentId = 'syn8672415';
+activityName = 'Enrichment Analysis';
+activityDescription = 'Enrichment analysis of reprocessed rnaseq from all 7 brain regions';
+
+thisFileName <- 'pathwayEnrichmentForProtGeneSet.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/ampad-DiffExp", ref="branch", refName='geneLevelAnalysis')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('gene_level_analysis/',thisFileName))
+```
+
+## Data download
+### Get summary differential expression results from synapse
+```{r get.diffExp}
+dexp = fread(synapser::synGet('syn11180450')$path, data.table = FALSE)
+all.used.ids = c('syn11180450')
+
+bck.genes = unique(dexp$hgnc_symbol)
+```
+
+### Get proteostasis gene sets
+```{r get.gs, cache = FALSE}
+# Get proteostasis related gene sets from synapse
+prot.gs = fread(synGet('syn17037983')$path, data.table = F, sep = ',') %>%
+  dplyr::select(symbol, contains('all_')) %>%
+  tidyr::gather(pathway, isPresent, -symbol) %>%
+  dplyr::mutate(pathway = gsub('all_','',pathway)) %>%
+  dplyr::filter(isPresent == 1) %>%
+  group_by(pathway) %>%
+  dplyr::select(symbol) %>%
+  nest() %>%
+  deframe() %>%
+  map(.f = function(x){unique(x$symbol)})
+all.used.ids = c('syn17037983', all.used.ids)
+```
+
+### Perform enrichment analysis
+```{r enrich.de}
+enrich.results = dexp %>%
+  dplyr::filter(Direction != 'NONE') %>%
+  tidyr::unite(id , Model, Tissue, Comparison, Sex, Direction, sep = '___') %>%
+  dplyr::select(id, hgnc_symbol) %>%
+  group_by(id) %>%
+  nest() %>%
+  deframe() %>%
+  map(.f = function(x){unique(x$hgnc_symbol)}) %>%
+  future_map(.f = function(x, gs, bckGenes){
+    gsToTest = setdiff(unique(x),'')
+    if (length(gsToTest) >= 10){
+      enrich = map(gs, .f = function(y, gsToTest, bckGenes){
+        CovariateAnalysis::fisherEnrichment(y, gsToTest, bckGenes)
+      }, gsToTest, bckGenes) %>%
+        bind_rows(.id = 'GeneSetName')
+    } else {
+      enrich = data.frame()
+    }
+    return(enrich)
+  }, prot.gs, bck.genes) %>%
+  bind_rows(.id = 'id') %>%
+  dplyr::group_by(id) %>%
+  dplyr::mutate(fdr = p.adjust(pval, method = 'BH')) %>%
+  tidyr::separate(id, c('Model', 'Tissue', 'Comparison', 'Sex', 'Direction'), sep = '\\___')
+  
+CODE = Folder(name = 'Enrichment analysis of all differentialy expressed genes for Proteostasis/Lysosome',
+              parentId = 'syn8672415')
+CODE = synStore(CODE)
+
+fwrite(enrich.results, file = 'enrichmentResultsProteostasis.tsv', sep = '\t')
+obj = File('enrichmentResultsProteostasis.tsv', 
+           name = 'Proteostasis Enrichment Results (for all differential expression)', 
+           parentId = CODE$properties$id)
+obj = synasper::synStore(obj, executed = thisFile, used = all.used.ids, 
+                         activityName = activityName, activityDescription = activityDescription)
+```
