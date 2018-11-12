@@ -112,7 +112,9 @@ enrich.results = dexp %>%
   dplyr::group_by(id) %>%
   dplyr::mutate(fdr = p.adjust(pval, method = 'BH')) %>%
   tidyr::separate(id, c('Model', 'Tissue', 'Comparison', 'Sex', 'Direction'), sep = '\\___')
-
+```
+Gene sets enriched for AD-CONTROL
+```{r fig1}
 sig.set = filter(enrich.results, Model == 'Diagnosis', Comparison == 'AD-CONTROL', 
                  Sex == 'ALL', GeneSetName %in% c('chaperones', 'heat shock proteins', 'lysosome', 'macroautophagy (DB)')) %>%
   dplyr::select(Tissue, Direction, GeneSetName, Odds.Ratio, fdr) %>%
@@ -140,6 +142,43 @@ ComplexHeatmap::Heatmap(or, col = circlize::colorRamp2(c(0,5), colors = c('white
                         }, name = 'Odds Ratio', show_row_dend = F, show_column_dend = F, show_column_names = F,
                         top_annotation = ha, top_annotation_height = unit(2.2, "cm"))
 ```
+Gene sets enriched for AD-CONTROL in each sex
+```{r fig2}
+sig.set = filter(enrich.results, Model == 'Diagnosis.Sex', Comparison == 'AD-CONTROL', 
+                 GeneSetName %in% c('chaperones', 'heat shock proteins', 'lysosome', 'macroautophagy (DB)', 
+                                    'E3 ligases and adaptor proteins')) %>%
+  dplyr::select(Tissue, Direction, GeneSetName, Odds.Ratio, fdr, Sex) %>%
+  tidyr::unite(Tissue.Direction, Tissue, Direction, sep = '.') %>%
+  dplyr::filter(Tissue.Direction %in% c('CBE.UP', 'PHG.UP', 'TCX.UP')) %>%
+  tidyr::unite(Tissue.Direction.Sex, Tissue.Direction, Sex, sep = '.') 
+  
+or = sig.set %>%
+  dplyr::select(Tissue.Direction.Sex, GeneSetName, Odds.Ratio) %>%
+  tidyr::spread(GeneSetName, Odds.Ratio) %>%
+  column_to_rownames(var = 'Tissue.Direction.Sex') %>%
+  as.data.frame()
+
+fdr = sig.set %>%
+  mutate(is.sig = ifelse(fdr <= 0.05, '*', '')) %>%
+  dplyr::select(Tissue.Direction.Sex, GeneSetName, is.sig) %>%
+  tidyr::spread(GeneSetName, is.sig) %>%
+  column_to_rownames(var = 'Tissue.Direction.Sex') %>%
+  as.data.frame()
+
+split.mat = data.frame(id = rownames(or)) %>%
+  tidyr::separate(id, c('Tissue', 'Direction', 'Sex'), sep = '\\.') %>%
+  dplyr::select(Sex)
+
+ha = HeatmapAnnotation(text = anno_text(colnames(or), rot = 30, just = "left", offset = unit(1, "mm")))
+
+ComplexHeatmap::Heatmap(or, col = circlize::colorRamp2(c(0,5), colors = c('white', 'red')),
+                        cell_fun = function(j, i, x, y, w, h, col) {
+                          grid.text(fdr[i, j], x, y)
+                        }, name = 'Odds Ratio', show_row_dend = F, show_column_dend = F, show_column_names = F,
+                        top_annotation = ha, top_annotation_height = unit(2.5, "cm"),
+                        split = split.mat)
+```
+
 ```{r syn.store, cache = FALSE, echo=FALSE, include=FALSE}  
 CODE = synapser::Folder(name = 'Enrichment analysis of all differentialy expressed genes for Proteostasis-Lysosome',
                         parentId = 'syn8672415')
