@@ -14,7 +14,7 @@ synLogin()
 
 knit2synapse::createAndKnitToFolderEntity(file = "pathwayEnrichmentForProtGeneSet.Rmd",
                                           parentId = "syn8672415",
-                                          folderName = 'Enrichment analysis of all differentialy expressed genes for Proteostasis/Lysosome')
+                                          folderName = 'Enrichment analysis of all differentialy expressed genes for Proteostasis-Lysosome')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -25,6 +25,7 @@ library(data.table)
 library(plyr)
 library(tidyverse)
 library(biomaRt)
+library(ComplexHeatmap)
 
 library(synapser)
 library(knitr)
@@ -72,7 +73,7 @@ bck.genes = unique(dexp$hgnc_symbol)
 ### Get proteostasis gene sets
 ```{r get.gs, cache = FALSE}
 # Get proteostasis related gene sets from synapse
-prot.gs = fread(synGet('syn17037983')$path, data.table = F, sep = ',') %>%
+prot.gs = fread(synapser::synGet('syn17037983')$path, data.table = F, sep = ',') %>%
   dplyr::select(symbol, contains('all_')) %>%
   tidyr::gather(pathway, isPresent, -symbol) %>%
   dplyr::mutate(pathway = gsub('all_','',pathway)) %>%
@@ -81,7 +82,7 @@ prot.gs = fread(synGet('syn17037983')$path, data.table = F, sep = ',') %>%
   dplyr::select(symbol) %>%
   nest() %>%
   deframe() %>%
-  map(.f = function(x){unique(x$symbol)})
+  purrr::map(.f = function(x){unique(x$symbol)})
 all.used.ids = c('syn17037983', all.used.ids)
 ```
 
@@ -94,11 +95,11 @@ enrich.results = dexp %>%
   group_by(id) %>%
   nest() %>%
   deframe() %>%
-  map(.f = function(x){unique(x$hgnc_symbol)}) %>%
+  purrr::map(.f = function(x){unique(x$hgnc_symbol)}) %>%
   future_map(.f = function(x, gs, bckGenes){
     gsToTest = setdiff(unique(x),'')
     if (length(gsToTest) >= 10){
-      enrich = map(gs, .f = function(y, gsToTest, bckGenes){
+      enrich = purrr::map(gs, .f = function(y, gsToTest, bckGenes){
         CovariateAnalysis::fisherEnrichment(y, gsToTest, bckGenes)
       }, gsToTest, bckGenes) %>%
         bind_rows(.id = 'GeneSetName')
@@ -111,15 +112,44 @@ enrich.results = dexp %>%
   dplyr::group_by(id) %>%
   dplyr::mutate(fdr = p.adjust(pval, method = 'BH')) %>%
   tidyr::separate(id, c('Model', 'Tissue', 'Comparison', 'Sex', 'Direction'), sep = '\\___')
+
+sig.set = filter(enrich.results, Model == 'Diagnosis', Comparison == 'AD-CONTROL', 
+                 Sex == 'ALL', GeneSetName %in% c('chaperones', 'heat shock proteins', 'lysosome', 'macroautophagy (DB)')) %>%
+  dplyr::select(Tissue, Direction, GeneSetName, Odds.Ratio, fdr) %>%
+  tidyr::unite(Tissue.Direction, Tissue, Direction, sep = '.') %>%
+  dplyr::filter(Tissue.Direction %in% c('CBE.UP', 'PHG.UP', 'STG.UP', 'TCX.UP'))
   
-CODE = Folder(name = 'Enrichment analysis of all differentialy expressed genes for Proteostasis/Lysosome',
-              parentId = 'syn8672415')
-CODE = synStore(CODE)
+or = sig.set %>%
+  dplyr::select(Tissue.Direction, GeneSetName, Odds.Ratio) %>%
+  tidyr::spread(GeneSetName, Odds.Ratio) %>%
+  column_to_rownames(var = 'Tissue.Direction') %>%
+  as.data.frame()
+
+fdr = sig.set %>%
+  mutate(is.sig = ifelse(fdr <= 0.05, '*', '')) %>%
+  dplyr::select(Tissue.Direction, GeneSetName, is.sig) %>%
+  tidyr::spread(GeneSetName, is.sig) %>%
+  column_to_rownames(var = 'Tissue.Direction') %>%
+  as.data.frame()
+
+ha = HeatmapAnnotation(text = anno_text(colnames(or), rot = 30, just = "left", offset = unit(1, "mm")))
+
+ComplexHeatmap::Heatmap(or, col = circlize::colorRamp2(c(0,5), colors = c('white', 'red')),
+                        cell_fun = function(j, i, x, y, w, h, col) {
+                          grid.text(fdr[i, j], x, y)
+                        }, name = 'Odds Ratio', show_row_dend = F, show_column_dend = F, show_column_names = F,
+                        top_annotation = ha, top_annotation_height = unit(2.2, "cm"))
+```
+```{r syn.store, cache = FALSE, echo=FALSE, include=FALSE}  
+CODE = synapser::Folder(name = 'Enrichment analysis of all differentialy expressed genes for Proteostasis-Lysosome',
+                        parentId = 'syn8672415')
+CODE = synapser::synStore(CODE)
 
 fwrite(enrich.results, file = 'enrichmentResultsProteostasis.tsv', sep = '\t')
-obj = File('enrichmentResultsProteostasis.tsv', 
-           name = 'Proteostasis Enrichment Results (for all differential expression)', 
-           parentId = CODE$properties$id)
-obj = synasper::synStore(obj, executed = thisFile, used = all.used.ids, 
+obj = synapser::File('enrichmentResultsProteostasis.tsv', 
+                     name = 'Proteostasis Enrichment Results (for all differential expression)', 
+                     parentId = CODE$properties$id)
+obj = synapser::synStore(obj, executed = thisFile, used = all.used.ids, 
                          activityName = activityName, activityDescription = activityDescription)
 ```
+
