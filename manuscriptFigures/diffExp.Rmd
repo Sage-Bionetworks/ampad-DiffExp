@@ -109,6 +109,22 @@ ndexp = dexp %>%
   tidyr::spread(Sex.Direction, count)
 kable(ndexp)
 
+tmp = dexp %>%
+  dplyr::filter(Model %in% c('Diagnosis', 'Diagnosis.Sex'),
+                Comparison == 'AD-CONTROL') %>% 
+  dplyr::filter(Direction != 'NONE',
+                !(Model == 'Diagnosis.Sex' & Sex == 'ALL')) %>%
+  dplyr::group_by(Study, Tissue, Direction, Sex) %>% 
+  dplyr::summarise(count = length(unique(ensembl_gene_id)))
+
+p = ggplot(tmp %>% filter(Sex == 'ALL'), aes(x = Tissue, y = count, fill = Direction)) + geom_bar(stat = 'identity', position = 'dodge')
+p = p + theme_bw() %+replace% theme(legend.position= 'top') + scale_y_log10()
+pl = list(); pl[[1]] = p
+
+p = ggplot(tmp %>% filter(Sex != 'ALL'), aes(x = Sex, y = count, fill = Direction)) + geom_bar(stat = 'identity', position = 'dodge')
+p = p + theme_bw() %+replace% theme(legend.position= 'top') + scale_y_log10() + facet_grid(.~Tissue)
+pl[[2]] = p
+
 meta.dexp = downloadFile('syn11914808')
 all.used.ids = c(all.used.ids, 'syn11914808')
 tmp = meta.dexp %>%

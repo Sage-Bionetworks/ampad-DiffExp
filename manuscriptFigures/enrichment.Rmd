@@ -68,14 +68,24 @@ enrich.all = list(IndividualAnalysis = enrich %>%
                                            'IFG', 'DLPFC', 'CBE', 'FP')),
                 Model = factor(Model, levels = c('MetaAnalysis', 'IndividualAnalysis')))
 
-p = ggplot(enrich.all, aes(x = SetName, y = Tissue, color = -log10(FDR), size = Odds.Ratio)) + geom_point()
+p = ggplot(enrich.all %>% filter(!(Tissue %in% c('RANDOM', 'FIXED'))),
+           aes(x = SetName, y = Tissue, color = FDR, size = Odds.Ratio)) + geom_point()
 p = p + facet_grid(Direction+.~Sex) + xlab('') 
 p = p + theme_bw() %+replace% theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), 
                                     legend.position = 'top')
-p = p + scale_color_gradientn(colours = c('grey', 'grey', viridis::viridis(2)[2], 
-                                          viridis::viridis(2)[1], viridis::viridis(2)[1]),
-                              values = c(0, 0.01625, 0.02875, 0.07, 1))
+p = p + scale_color_gradientn(colours = c(viridis::viridis(2)[1], viridis::viridis(2)[2],  'grey', 'grey'),
+                              values = c(0, 0.05, 0.1, 1))
 p
+
+
+p = ggplot(enrich.all %>% filter(Sex == 'ALL', !(Tissue %in% c('RANDOM', 'FIXED'))), 
+           aes(x = SetName, y = Tissue, color = FDR, size = Odds.Ratio)) + geom_point()
+p = p + facet_grid(.~Direction) + xlab('') 
+p = p + theme_bw() %+replace% theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), legend.position = 'top')
+p = p + scale_color_gradientn(colours = c(viridis::viridis(2)[1], viridis::viridis(2)[2],  'grey', 'grey'),
+                              values = c(0, 0.05, 0.1, 1))
+p
+pl = list(); pl[[1]] = p
 ```
 AD related genesets
 ```{r ad.related, fig.width=8, fig.height=6}
@@ -94,14 +104,24 @@ enrich.all = list(IndividualAnalysis = enrich %>%
                                                      'pantherPresenilin', 'wikipathwaysHuman', 
                                                      'wikipathwaysMouse')))
 
-p = ggplot(enrich.all, aes(x = SetName, y = Tissue, color = -log10(FDR), size = Odds.Ratio)) + geom_point()
+p = enrich.all %>% 
+  filter(!(Tissue %in% c('RANDOM', 'FIXED'))) %>%
+           ggplot(aes(x = SetName, y = Tissue, color = FDR, size = Odds.Ratio)) + geom_point()
 p = p + facet_grid(Direction+.~Sex) + xlab('') 
+p = p + theme_bw() %+replace% theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), 
+                                    legend.position = 'top')
+p = p + scale_color_gradientn(colours = c(viridis::viridis(2)[1], viridis::viridis(2)[2],  'grey', 'grey'),
+                              values = c(0, 0.05, 0.1, 1))
+p
+
+p = ggplot(enrich.all %>% filter(!(Tissue %in% c('RANDOM', 'FIXED'))), aes(x = SetName, y = Tissue, color = -log10(FDR), size = Odds.Ratio)) + geom_point()
+p = p + facet_grid(Direction~.+Sex) + xlab('') 
 p = p + theme_bw() %+replace% theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), 
                                     legend.position = 'top')
 p = p + scale_color_gradientn(colours = c('grey', 'grey', viridis::viridis(2)[2], 
                                           viridis::viridis(2)[1], viridis::viridis(2)[1]),
                               values = c(0, 0.01625, 0.02875, 0.07, 1))
-p
+pl[[2]] = p
 ```
 
 Hypothesis free genesets
@@ -124,3 +144,22 @@ up.male = dplyr::filter(enrich.all, FDR <= 0.05, Sex == 'MALE', Direction == 'UP
 down.female = dplyr::filter(enrich.all, FDR <= 0.05, Sex == 'FEMALE', Direction == 'DOWN', Model == "MetaAnalysis", Tissue == 'RANDOM')
 down.male = dplyr::filter(enrich.all, FDR <= 0.05, Sex == 'MALE', Direction == 'DOWN', Model == "MetaAnalysis", Tissue == 'RANDOM')
 ```
+Proteostasis gene sets
+```{r}
+enrich.all = downloadFile('syn17038090') %>%
+  filter(Model %in% c('Diagnosis', 'Diagnosis.Sex'),
+         Comparison == 'AD-CONTROL') %>%
+  dplyr::mutate(Tissue = factor(Tissue, 
+                                levels = c('CBE', 'TCX', 'PHG', 'STG', 'DLPFC', 'IFG', 'FP')))
+
+p = enrich.all %>%
+  filter(Direction == 'UP') %>%
+  ggplot(aes(x = GeneSetName, y = Tissue, color = fdr, size = Odds.Ratio)) + geom_point()
+p = p + facet_grid(Direction+.~Sex) + xlab('') 
+p = p + theme_bw() %+replace% theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), 
+                                    legend.position = 'top')
+p = p + scale_color_gradientn(colours = c(viridis::viridis(2)[1], viridis::viridis(2)[2],  'grey', 'grey'),
+                              values = c(0, 0.05, 0.1, 1))
+p
+```
+
